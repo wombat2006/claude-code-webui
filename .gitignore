@@ -1,0 +1,121 @@
+# Environment Variables and Secrets
+.env*
+*.env
+.env.local
+.env.development
+.env.test
+.env.production
+.env.co-node
+.env.distributed  
+.env.tokyo
+
+# API Keys and Secrets
+config/secrets.json
+config/keys/
+*.key
+*.pem
+*.cert
+*.crt
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+*.lcov
+
+# nyc test coverage
+.nyc_output
+
+# node_modules
+node_modules/
+jspm_packages/
+
+# Build outputs
+dist/
+build/
+out/
+
+# Cache
+.cache/
+.parcel-cache/
+.next/
+.nuxt/
+.vuepress/dist
+
+# Temporary folders
+tmp/
+temp/
+.tmp/
+.temp/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE/Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Local development
+local/
+dev/
+development/
+
+# Docker
+.dockerignore
+
+# SSL Certificates (security sensitive)
+ssl/
+certificates/
+nginx/ssl/
+
+# Backup files
+*.backup
+*.bak
+*.old
+
+# Session data
+sessions/
+.sessions/
+
+# Cache directories
+.cache
+cache/
+.eslintcache
+
+# Runtime temp files
+/tmp/
+/var/tmp/
+
+# MCP server cache
+mcp-servers/cache/
+mcp-servers/temp/
+
+# Cipher framework sensitive data
+cipher-framework/keys/
+cipher-framework/sessions/

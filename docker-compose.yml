@@ -1,0 +1,67 @@
+version: '3.8'
+
+services:
+  claude-webui-server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    expose:
+      - "3001"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - JWT_SECRET=your-super-secret-jwt-key-change-in-production
+      - SESSION_TIMEOUT=30
+      - CLAUDE_CODE_PATH=/usr/local/bin/claude
+      - CLAUDE_WORKING_DIR=/tmp/claude-sessions
+      - MAX_SESSIONS=10
+      - RATE_LIMIT_WINDOW_MS=900000
+      - RATE_LIMIT_MAX_REQUESTS=100
+      - LOG_LEVEL=info
+    volumes:
+      - ./server/logs:/app/logs
+      - ./server/tmp:/tmp/claude-sessions
+    networks:
+      - claude-webui-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  claude-webui-client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    expose:
+      - "3000"
+    environment:
+      - REACT_APP_API_URL=https://localhost:443
+      - REACT_APP_WS_URL=wss://localhost:443
+    depends_on:
+      - claude-webui-server
+    networks:
+      - claude-webui-network
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - ./nginx/logs:/var/log/nginx
+    depends_on:
+      - claude-webui-server
+      - claude-webui-client
+    networks:
+      - claude-webui-network
+    restart: unless-stopped
+
+networks:
+  claude-webui-network:
+    driver: bridge

@@ -1,0 +1,20 @@
+{
+  "name": "claude-code-webui",
+  "version": "1.0.0",
+  "description": "Web UI wrapper for Claude Code CLI tool",
+  "main": "server/dist/index.js",
+  "scripts": {
+    "dev": "concurrently \"npm:server:dev\" \"npm:client:dev\"",
+    "server:dev": "cd server && npm run dev",
+    "client:dev": "cd client && npm start",
+    "build": "cd server && npm run build && cd ../client && npm run build",
+    "start": "cd server && npm start",
+    "install:all": "npm install && cd server && npm install && cd ../client && npm install"
+  },
+  "keywords": ["claude-code", "webui", "terminal", "wrapper"],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

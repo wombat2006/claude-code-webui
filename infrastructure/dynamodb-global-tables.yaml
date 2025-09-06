@@ -1,0 +1,283 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'DynamoDB Global Tables for Claude Code WebUI Distributed State Management'
+
+Parameters:
+  TableName:
+    Type: String
+    Default: claude-code-distributed-state
+    Description: Name of the DynamoDB table
+  
+  BillingMode:
+    Type: String
+    Default: ON_DEMAND
+    AllowedValues: [ON_DEMAND, PROVISIONED]
+    Description: DynamoDB billing mode
+  
+  ReadCapacity:
+    Type: Number
+    Default: 5
+    Description: Read capacity units (only used if BillingMode is PROVISIONED)
+  
+  WriteCapacity:
+    Type: Number
+    Default: 5
+    Description: Write capacity units (only used if BillingMode is PROVISIONED)
+
+Conditions:
+  IsProvisioned: !Equals [!Ref BillingMode, PROVISIONED]
+
+Resources:
+  # Primary DynamoDB Table (us-east-1)
+  DistributedStateTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Ref TableName
+      BillingMode: !Ref BillingMode
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+        - AttributeName: userId
+          AttributeType: S
+        - AttributeName: sessionId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      
+      # Global Secondary Indexes
+      GlobalSecondaryIndexes:
+        - IndexName: UserIndex
+          KeySchema:
+            - AttributeName: userId
+              KeyType: HASH
+            - AttributeName: sk
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+          BillingMode: !Ref BillingMode
+          ProvisionedThroughput: !If
+            - IsProvisioned
+            - ReadCapacityUnits: !Ref ReadCapacity
+              WriteCapacityUnits: !Ref WriteCapacity
+            - !Ref AWS::NoValue
+        
+        - IndexName: SessionIndex
+          KeySchema:
+            - AttributeName: sessionId
+              KeyType: HASH
+            - AttributeName: sk
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+          BillingMode: !Ref BillingMode
+          ProvisionedThroughput: !If
+            - IsProvisioned
+            - ReadCapacityUnits: !Ref ReadCapacity
+              WriteCapacityUnits: !Ref WriteCapacity
+            - !Ref AWS::NoValue
+      
+      # Enable Global Tables
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      
+      ProvisionedThroughput: !If
+        - IsProvisioned
+        - ReadCapacityUnits: !Ref ReadCapacity
+          WriteCapacityUnits: !Ref WriteCapacity
+        - !Ref AWS::NoValue
+      
+      # TTL Configuration
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      
+      # Point-in-time recovery
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      
+      # Server-side encryption
+      SSESpecification:
+        SSEEnabled: true
+        # Use AWS managed keys by default
+        # SSEType: KMS
+        # KMSMasterKeyId: !Ref DistributedStateKMSKey
+      
+      Tags:
+        - Key: Application
+          Value: claude-code-webui
+        - Key: Component
+          Value: distributed-state
+        - Key: Environment
+          Value: production
+
+  # S3 Bucket for Large Artifacts
+  ArtifactsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${TableName}-artifacts-${AWS::Region}'
+      
+      # Versioning for data integrity
+      VersioningConfiguration:
+        Status: Enabled
+      
+      # Lifecycle configuration
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldVersions
+            Status: Enabled
+            NoncurrentVersionExpirationInDays: 30
+          - Id: DeleteIncompleteMultipartUploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 7
+      
+      # Server-side encryption
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      
+      # Block public access
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      
+      Tags:
+        - Key: Application
+          Value: claude-code-webui
+        - Key: Component
+          Value: artifacts-storage
+        - Key: Environment
+          Value: production
+
+  # Cross-Region Replication for S3 (to Tokyo)
+  ReplicationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: s3.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ReplicationPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObjectVersion
+                  - s3:GetObjectVersionAcl
+                  - s3:ListBucket
+                Resource:
+                  - !Sub '${ArtifactsBucket}/*'
+                  - !GetAtt ArtifactsBucket.Arn
+              - Effect: Allow
+                Action:
+                  - s3:ReplicateObject
+                  - s3:ReplicateDelete
+                Resource: !Sub 'arn:aws:s3:::${TableName}-artifacts-ap-northeast-1/*'
+
+  # IAM Role for Application Access
+  ApplicationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${TableName}-application-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: DistributedStateAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # DynamoDB permissions
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                  - dynamodb:BatchGetItem
+                  - dynamodb:BatchWriteItem
+                Resource:
+                  - !GetAtt DistributedStateTable.Arn
+                  - !Sub '${DistributedStateTable.Arn}/index/*'
+              
+              # S3 permissions
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt ArtifactsBucket.Arn
+                  - !Sub '${ArtifactsBucket}/*'
+              
+              # CloudWatch permissions for monitoring
+              - Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricData
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+
+  # Instance Profile for EC2
+  ApplicationInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref ApplicationRole
+
+Outputs:
+  TableName:
+    Description: Name of the DynamoDB table
+    Value: !Ref DistributedStateTable
+    Export:
+      Name: !Sub '${AWS::StackName}-TableName'
+  
+  TableArn:
+    Description: ARN of the DynamoDB table
+    Value: !GetAtt DistributedStateTable.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-TableArn'
+  
+  StreamArn:
+    Description: ARN of the DynamoDB stream
+    Value: !GetAtt DistributedStateTable.StreamArn
+    Export:
+      Name: !Sub '${AWS::StackName}-StreamArn'
+  
+  BucketName:
+    Description: Name of the S3 artifacts bucket
+    Value: !Ref ArtifactsBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-BucketName'
+  
+  ApplicationRoleArn:
+    Description: ARN of the application IAM role
+    Value: !GetAtt ApplicationRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-ApplicationRoleArn'
+  
+  InstanceProfileArn:
+    Description: ARN of the EC2 instance profile
+    Value: !GetAtt ApplicationInstanceProfile.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-InstanceProfileArn'

@@ -1,0 +1,10 @@
+llm:
+  provider: gemini
+  model: gemini-2.5-flash
+  apiKey: $GEMINI_API_KEY # .envファイルから読み込まれる
+
+embedding:
+  type: gemini
+  model: gemini-embedding-001
+  apiKey: $GEMINI_API_KEY # .envファイルから読み込まれる
+

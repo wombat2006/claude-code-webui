@@ -1,0 +1,99 @@
+.App {
+  text-align: center;
+}
+
+.App-header {
+  background-color: #282c34;
+  padding: 20px;
+  color: white;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(10px + 2vmin);
+}
+
+.login-button {
+  background-color: #4CAF50;
+  color: white;
+  border: none;
+  padding: 15px 32px;
+  font-size: 16px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.login-button:hover {
+  background-color: #45a049;
+}
+
+.terminal {
+  background-color: #1e1e1e;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  width: 80%;
+  max-width: 800px;
+  text-align: left;
+}
+
+.terminal-output {
+  padding: 20px;
+  height: 300px;
+  overflow-y: auto;
+  font-family: 'Courier New', monospace;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.terminal-line {
+  margin: 4px 0;
+  color: #00ff00;
+}
+
+.terminal-input {
+  padding: 10px 20px;
+  border-top: 1px solid #ccc;
+  display: flex;
+  align-items: center;
+  font-family: 'Courier New', monospace;
+}
+
+.terminal-input span {
+  color: #00ff00;
+  margin-right: 10px;
+}
+
+.terminal-input input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: #00ff00;
+  font-family: 'Courier New', monospace;
+  font-size: 14px;
+  outline: none;
+}
+
+.terminal-input button {
+  margin-left: 10px;
+  padding: 5px 15px;
+  background-color: #4CAF50;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.terminal-input button:disabled {
+  background-color: #666;
+  cursor: not-allowed;
+}
+
+.connection-status {
+  padding: 10px 20px;
+  background-color: #333;
+  border-bottom: 1px solid #555;
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  color: #ccc;
+}
