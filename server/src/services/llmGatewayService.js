@@ -573,6 +573,113 @@ class LLMGatewayService {
   }
 
   /**
+   * Load pricing data from MODEL_PRICING_WITH_1K.json
+   */
+  loadPricingData() {
+    if (!this.pricingData) {
+      try {
+        const path = require('path');
+        const fs = require('fs');
+        const pricingPath = path.join(__dirname, '../../../docs/pricing/MODEL_PRICING_WITH_1K.json');
+        this.pricingData = JSON.parse(fs.readFileSync(pricingPath, 'utf8'));
+      } catch (error) {
+        console.error('Failed to load pricing data:', error.message);
+        this.pricingData = null;
+      }
+    }
+    return this.pricingData;
+  }
+
+  /**
+   * Calculate accurate cost based on official pricing
+   */
+  calculateAccurateCost(model, promptTokens, completionTokens) {
+    const pricingData = this.loadPricingData();
+    
+    if (!pricingData) {
+      // Fallback to hardcoded pricing if file not available
+      return this.calculateFallbackCost(model, promptTokens, completionTokens);
+    }
+
+    // Map model names to pricing data keys
+    let provider, modelKey;
+    
+    if (model.includes('claude-4') || model.includes('sonnet-4')) {
+      provider = 'anthropic';
+      modelKey = 'claude-sonnet-4';
+    } else if (model.includes('opus-4.1')) {
+      provider = 'anthropic';
+      modelKey = 'claude-opus-4.1';
+    } else if (model.includes('haiku-3.5')) {
+      provider = 'anthropic';
+      modelKey = 'claude-haiku-3.5';
+    } else if (model.includes('gpt-5-mini')) {
+      provider = 'openai';
+      modelKey = 'gpt-5-mini';
+    } else if (model.includes('gpt-5-nano')) {
+      provider = 'openai';
+      modelKey = 'gpt-5-nano';
+    } else if (model.includes('gpt-5')) {
+      provider = 'openai';
+      modelKey = 'gpt-5';
+    } else if (model.includes('o3-mini')) {
+      provider = 'openai';
+      modelKey = 'o3-mini';
+    } else if (model.includes('gemini-2.5-pro')) {
+      provider = 'google';
+      modelKey = 'gemini-2.5-pro';
+    } else if (model.includes('gemini-2.5-flash-lite')) {
+      provider = 'google';
+      modelKey = 'gemini-2.5-flash-lite';
+    } else if (model.includes('gemini-2.5-flash')) {
+      provider = 'google';
+      modelKey = 'gemini-2.5-flash';
+    } else if (model.includes('gemini-2.0-flash-lite')) {
+      provider = 'google';
+      modelKey = 'gemini-2.0-flash-lite';
+    } else if (model.includes('gemini-2.0-flash')) {
+      provider = 'google';
+      modelKey = 'gemini-2.0-flash';
+    } else {
+      // Default fallback
+      return this.calculateFallbackCost(model, promptTokens, completionTokens);
+    }
+
+    const modelPricing = pricingData.providers[provider]?.[modelKey];
+    if (!modelPricing || !modelPricing.input_per_1k || !modelPricing.output_per_1k) {
+      return this.calculateFallbackCost(model, promptTokens, completionTokens);
+    }
+
+    // Calculate cost using official pricing (per 1K tokens)
+    const inputCost = (promptTokens / 1000) * modelPricing.input_per_1k;
+    const outputCost = (completionTokens / 1000) * modelPricing.output_per_1k;
+    
+    return inputCost + outputCost;
+  }
+
+  /**
+   * Fallback cost calculation if pricing data unavailable
+   */
+  calculateFallbackCost(model, promptTokens, completionTokens) {
+    // Conservative fallback pricing
+    let inputRate = 0.003;  // $0.003/1K
+    let outputRate = 0.015; // $0.015/1K
+    
+    if (model.includes('gpt-5')) {
+      inputRate = 0.00125;
+      outputRate = 0.01;
+    } else if (model.includes('opus-4.1')) {
+      inputRate = 0.015;
+      outputRate = 0.075;
+    } else if (model.includes('gemini-2.5-pro')) {
+      inputRate = 0.00125;
+      outputRate = 0.01;
+    }
+    
+    return (promptTokens / 1000) * inputRate + (completionTokens / 1000) * outputRate;
+  }
+
+  /**
    * Call Claude API
    */
   async callClaudeAPI(model, prompt, options = {}) {
@@ -606,8 +713,8 @@ class LLMGatewayService {
     const completionTokens = response.usage.output_tokens;
     const totalTokens = promptTokens + completionTokens;
     
-    // Claude pricing: $3/M input tokens, $15/M output tokens for Sonnet
-    const cost = (promptTokens * 0.000003) + (completionTokens * 0.000015);
+    // Use accurate pricing calculation
+    const cost = this.calculateAccurateCost(model, promptTokens, completionTokens);
 
     return {
       content: response.content[0].text,
@@ -772,22 +879,8 @@ class LLMGatewayService {
       totalTokens = response.usage?.total_tokens || promptTokens + completionTokens;
     }
     
-    // Updated pricing for newer models
-    let inputCostPer1M = 10; // Default GPT-4 pricing
-    let outputCostPer1M = 30;
-    
-    if (modelName.includes('gpt-5')) {
-      inputCostPer1M = 15; // Estimated GPT-5 pricing
-      outputCostPer1M = 60;
-    } else if (modelName.includes('o3')) {
-      inputCostPer1M = 12; // Estimated O3 pricing
-      outputCostPer1M = 48;
-    } else if (modelName.includes('o4-mini')) {
-      inputCostPer1M = 3; // Estimated o4-mini pricing
-      outputCostPer1M = 12;
-    }
-    
-    const cost = (promptTokens * inputCostPer1M / 1000000) + (completionTokens * outputCostPer1M / 1000000);
+    // Calculate accurate cost using official pricing table
+    const cost = this.calculateAccurateCost(modelName, promptTokens, completionTokens);
 
     return {
       content,
@@ -912,8 +1005,8 @@ class LLMGatewayService {
     const completionTokens = Math.ceil(text.length / 4);
     const totalTokens = promptTokens + completionTokens;
     
-    // Gemini pricing: $1.25/M input tokens, $5/M output tokens
-    const cost = (promptTokens * 0.00000125) + (completionTokens * 0.000005);
+    // Calculate accurate cost using official pricing table
+    const cost = this.calculateAccurateCost(model, promptTokens, completionTokens);
 
     return {
       content: text,
@@ -959,17 +1052,8 @@ class LLMGatewayService {
       const completionTokens = Math.ceil(content.length / 4);
       const totalTokens = promptTokens + completionTokens;
       
-      // Estimate cost based on model type
-      let costPerToken = 0.000003; // Default
-      if (model.includes('gpt-5') || model.includes('o3')) {
-        costPerToken = 0.00001;
-      } else if (model.includes('claude-4') || model.includes('sonnet-4')) {
-        costPerToken = 0.000008;
-      } else if (model.includes('gemini-2.5-pro') || model.includes('gemini')) {
-        costPerToken = 0.0000005;
-      }
-      
-      const cost = totalTokens * costPerToken;
+      // Calculate accurate cost using official pricing table
+      const cost = this.calculateAccurateCost(model, promptTokens, completionTokens);
       
       return {
         content,
