@@ -1,0 +1,10 @@
+Test PDF Content for RAG Testing
+This is a sample PDF document containing technical information about:
+- Machine Learning and AI algorithms
+- Database optimization techniques  
+- Distributed systems architecture
+- Cloud computing best practices
+- Performance monitoring and metrics
+- Security considerations for web applications
+
+This document contains multiple paragraphs to test the RAG indexing and search functionality with PDF content.

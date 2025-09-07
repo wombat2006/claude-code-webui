@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
+import Dashboard from './components/Dashboard';
+import LLMCollaboration from './components/LLMCollaboration';
 import './App.css';
 
 function App() {
@@ -11,36 +13,22 @@ function App() {
 
   const handleLogin = async () => {
     try {
-      const response = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          username: 'demo',
-          password: 'demo123'
-        })
-      });
+      // Skip authentication for development mode
+      setIsConnected(true);
+      setMessages(['Development mode: Connecting to Claude Code...']);
       
-      if (response.ok) {
-        const data = await response.json();
-        setIsConnected(true);
-        setMessages(['Login successful! Connecting to Claude Code...']);
-        
-        // Initialize Socket.IO connection with JWT token
-        initializeSocket(data.token);
-      }
+      // Initialize Socket.IO connection
+      initializeSocket();
     } catch (error) {
       setMessages(['Connection error. Please check if server is running.']);
     }
   };
 
-  const initializeSocket = (token) => {
-    const socket = io('/', {
-      auth: {
-        token: token
-      },
-      transports: ['websocket', 'polling']
+  const initializeSocket = () => {
+    const socket = io('https://techsapo.com', {
+      path: '/socket.io',
+      transports: ['websocket', 'polling'],
+      secure: true
     });
 
     socketRef.current = socket;
@@ -98,6 +86,20 @@ function App() {
       <header className="App-header">
         <h1>Claude Code WebUI</h1>
         <p>Web interface for Claude Code CLI</p>
+        
+        {/* Dashboard and LLM Collaboration available when connected */}
+        {isConnected && (
+          <>
+            <Dashboard 
+              socket={socketRef.current} 
+              isConnected={isSocketConnected} 
+            />
+            <LLMCollaboration
+              socket={socketRef.current}
+              isConnected={isSocketConnected}
+            />
+          </>
+        )}
         
         {!isConnected ? (
           <div>

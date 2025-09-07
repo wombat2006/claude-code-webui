@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Metrics Dashboard Test</title>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <style>
+        body {
+            font-family: 'Courier New', monospace;
+            background: #1e1e1e;
+            color: #abb2bf;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .header {
+            background: #2d3748;
+            padding: 15px 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+        }
+        .metric-card {
+            background: #2d3748;
+            border: 1px solid #4a5568;
+            border-radius: 8px;
+            padding: 15px;
+        }
+        .metric-card h3 {
+            margin: 0 0 10px 0;
+            color: #61dafb;
+        }
+        .metric-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 5px 0;
+            border-bottom: 1px solid #4a5568;
+        }
+        .metric-item:last-child {
+            border-bottom: none;
+        }
+        .metric-label {
+            color: #c678dd;
+        }
+        .metric-value {
+            color: #98c379;
+            font-weight: bold;
+        }
+        .status-connected {
+            color: #98c379;
+        }
+        .status-disconnected {
+            color: #e06c75;
+        }
+        .controls {
+            margin: 20px 0;
+        }
+        button {
+            background: #61dafb;
+            color: #1e1e1e;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+            font-family: inherit;
+        }
+        button:hover {
+            background: #4fa8c7;
+        }
+        .log {
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 15px;
+            margin-top: 20px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-size: 12px;
+        }
+        .log-item {
+            margin: 5px 0;
+            word-break: break-all;
+        }
+        .log-system { color: #79c0ff; }
+        .log-llm { color: #a5f3fc; }
+        .log-rag { color: #fbbf24; }
+        .log-error { color: #f87171; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📊 Claude Code WebUI - メトリクスダッシュボード</h1>
+            <p>接続状況: <span id="connectionStatus" class="status-disconnected">未接続</span></p>
+        </div>
+
+        <div class="controls">
+            <button onclick="simulateLLMRequest()">LLMリクエストのシミュレート</button>
+            <button onclick="simulateRAGSearch()">RAG検索のシミュレート</button>
+            <button onclick="requestSystemStats()">システム統計の取得</button>
+            <button onclick="clearLog()">ログクリア</button>
+        </div>
+
+        <div class="metrics-grid">
+            <!-- システムリソース -->
+            <div class="metric-card">
+                <h3>🖥️ システム</h3>
+                <div class="metric-item">
+                    <span class="metric-label">メモリ (RSS):</span>
+                    <span class="metric-value" id="system-rss">--</span>
+                </div>
+                <div class="metric-item">
+                    <span class="metric-label">CPU:</span>
+                    <span class="metric-value" id="system-cpu">--</span>
+                </div>
+                <div class="metric-item">
+                    <span class="metric-label">最終更新:</span>
+                    <span class="metric-value" id="system-updated">--</span>
+                </div>
+            </div>
+
+            <!-- LLMモデル -->
+            <div class="metric-card">
+                <h3>🤖 LLMモデル</h3>
+                <div id="llm-models">
+                    <div class="metric-item">
+                        <span class="metric-label">まだデータがありません</span>
+                        <span class="metric-value">--</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- RAG -->
+            <div class="metric-card">
+                <h3>📚 RAG検索</h3>
+                <div class="metric-item">
+                    <span class="metric-label">ヒット率:</span>
+                    <span class="metric-value" id="rag-hitrate">--</span>
+                </div>
+                <div class="metric-item">
+                    <span class="metric-label">総検索数:</span>
+                    <span class="metric-value" id="rag-total">--</span>
+                </div>
+                <div class="metric-item">
+                    <span class="metric-label">最終実行:</span>
+                    <span class="metric-value" id="rag-last">--</span>
+                </div>
+            </div>
+
+            <!-- セッション統計 -->
+            <div class="metric-card">
+                <h3>📊 セッション</h3>
+                <div class="metric-item">
+                    <span class="metric-label">リクエスト:</span>
+                    <span class="metric-value" id="session-requests">0</span>
+                </div>
+                <div class="metric-item">
+                    <span class="metric-label">トークン:</span>
+                    <span class="metric-value" id="session-tokens">0</span>
+                </div>
+                <div class="metric-item">
+                    <span class="metric-label">コスト:</span>
+                    <span class="metric-value" id="session-cost">$0.0000</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="log" id="eventLog">
+            <strong>イベントログ:</strong><br>
+        </div>
+    </div>
+
+    <script>
+        // Socket.IO接続
+        const socket = io(window.location.origin, {
+            path: '/metrics-socket.io/'
+        });
+        
+        // メトリクス状態
+        let metrics = {
+            rag: { hits: 0, totalSearches: 0 },
+            session: { requests: 0, tokens: 0, cost: 0 }
+        };
+
+        // ログ管理
+        let lastSystemLogTime = 0;
+        const SYSTEM_LOG_THROTTLE = 60000; // 1分間隔でシステムログ制限
+        
+        // ログ関数
+        function log(message, type = 'system') {
+            // システム統計ログの制御
+            if (type === 'system' && message.includes('システム統計')) {
+                const now = Date.now();
+                if (now - lastSystemLogTime < SYSTEM_LOG_THROTTLE) {
+                    return; // スキップ
+                }
+                lastSystemLogTime = now;
+            }
+            
+            const logEl = document.getElementById('eventLog');
+            const timestamp = new Date().toLocaleTimeString('ja-JP', {timeZone: 'Asia/Tokyo'});
+            const logItem = document.createElement('div');
+            logItem.className = `log-item log-${type}`;
+            logItem.innerHTML = `[${timestamp}] ${message}`;
+            logEl.appendChild(logItem);
+            
+            // ログが100行を超えたら古いものを削除
+            while (logEl.children.length > 100) {
+                logEl.removeChild(logEl.firstChild);
+            }
+            
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+
+        // 初期化
+        log('メトリクスダッシュボードを初期化中...', 'system');
+        
+        // Socket.IOイベント
+        socket.on('connect', () => {
+            document.getElementById('connectionStatus').textContent = '接続中';
+            document.getElementById('connectionStatus').className = 'status-connected';
+            log('Socket.IOサーバーに接続しました', 'success');
+        });
+        
+        socket.on('connect_error', (error) => {
+            log(`接続エラー: ${error.message}`, 'error');
+        });
+
+        socket.on('disconnect', () => {
+            document.getElementById('connectionStatus').textContent = '切断';
+            document.getElementById('connectionStatus').className = 'status-disconnected';
+            log('Socket.IOサーバーから切断されました', 'error');
+        });
+
+        // メトリクスイベント
+        socket.on('metrics:system', (data) => {
+            log(`システム統計: RSS ${data.rss}MB, CPU ${data.cpu}%`, 'system');
+            document.getElementById('system-rss').textContent = `${data.rss}MB`;
+            document.getElementById('system-cpu').textContent = `${data.cpu}%`;
+            document.getElementById('system-updated').textContent = data.lastUpdated || 'なし';
+        });
+
+        // 初期データ受信フラグ
+        let initialDataReceived = { daily: false, llm: new Set(), rag: false };
+        
+        socket.on('metrics:daily_update', (data) => {
+            if (!initialDataReceived.daily) {
+                log(`日別統計読み込み: リクエスト${data.requests}回, トークン${data.tokens.toLocaleString()}, コスト$${data.cost.toFixed(4)}`, 'success');
+                initialDataReceived.daily = true;
+            }
+        });
+
+        socket.on('metrics:llm_health', (data) => {
+            const latency = data.lastLatency || data.latency || 0;
+            
+            // 初期データログ (一度だけ)
+            if (!initialDataReceived.llm.has(data.model)) {
+                log(`${data.model}: 状態${data.status}, レイテンシ${latency}ms`, 'llm');
+                initialDataReceived.llm.add(data.model);
+            }
+            
+            // UI表示更新
+            const modelsEl = document.getElementById('llm-models');
+            const statusIcon = data.status === 'healthy' ? '🟢' : 
+                             data.status === 'degraded' ? '🟡' : '🔴';
+            
+            // 既存のモデル要素を探すか新しく作成
+            let modelEl = document.getElementById(`llm-${data.model}`);
+            if (!modelEl) {
+                modelEl = document.createElement('div');
+                modelEl.id = `llm-${data.model}`;
+                modelEl.className = 'metric-item';
+                
+                // 最初のアイテムが「まだデータがありません」の場合は削除
+                const placeholderEl = modelsEl.querySelector('.metric-item');
+                if (placeholderEl && placeholderEl.textContent.includes('まだデータがありません')) {
+                    placeholderEl.remove();
+                }
+                
+                modelsEl.appendChild(modelEl);
+            }
+            
+            modelEl.innerHTML = `
+                <span class="metric-label">${statusIcon} ${data.model}:</span>
+                <span class="metric-value">${latency}ms</span>
+            `;
+        });
+
+        socket.on('metrics:rag_update', (data) => {
+            if (!initialDataReceived.rag && data.totalSearches > 0) {
+                const hitRate = ((data.hits/data.totalSearches)*100).toFixed(1);
+                log(`RAG統計読み込み: ヒット率${hitRate}%, 総検索${data.totalSearches}回`, 'rag');
+                initialDataReceived.rag = true;
+            }
+        });
+
+        socket.on('metrics:llm_complete', (data) => {
+            log(`LLM完了: ${data.model} - ${data.tokens}トークン, $${data.cost}, ${data.latency}ms`, 'llm');
+            
+            // セッション統計更新
+            metrics.session.requests++;
+            metrics.session.tokens += data.tokens;
+            metrics.session.cost += data.cost;
+            
+            document.getElementById('session-requests').textContent = metrics.session.requests;
+            document.getElementById('session-tokens').textContent = metrics.session.tokens.toLocaleString();
+            document.getElementById('session-cost').textContent = `$${metrics.session.cost.toFixed(4)}`;
+        });
+
+        socket.on('metrics:rag_search', (data) => {
+            log(`RAG検索: ${data.results}件の結果, ${data.processingTime}ms`, 'rag');
+            
+            // RAG統計更新
+            metrics.rag.totalSearches++;
+            if (data.hasResults) {
+                metrics.rag.hits++;
+            }
+            
+            const hitRate = metrics.rag.totalSearches > 0 
+                ? Math.round((metrics.rag.hits / metrics.rag.totalSearches) * 100)
+                : 0;
+            
+            document.getElementById('rag-hitrate').textContent = `${hitRate}%`;
+            document.getElementById('rag-total').textContent = metrics.rag.totalSearches;
+            document.getElementById('rag-last').textContent = new Date().toLocaleTimeString();
+        });
+
+
+        // 制御関数
+        function simulateLLMRequest() {
+            const models = ['claude-4', 'gpt-5', 'gemini-2.5-pro'];
+            const model = models[Math.floor(Math.random() * models.length)];
+            const tokens = Math.floor(Math.random() * 2000) + 500;
+            const cost = tokens * 0.000003; // 簡単なコスト計算
+            const latency = Math.floor(Math.random() * 2000) + 800;
+            
+            socket.emit('test:simulate_llm', {
+                sessionId: 'test-session-dashboard',
+                model,
+                tokens,
+                cost,
+                latency,
+                success: Math.random() > 0.1 // 90%成功率
+            });
+        }
+
+        function simulateRAGSearch() {
+            const queries = ['memory optimization', 'socket.io integration', 'dashboard metrics'];
+            const query = queries[Math.floor(Math.random() * queries.length)];
+            const hasResults = Math.random() > 0.3; // 70%ヒット率
+            const results = hasResults ? 
+                Array.from({length: Math.floor(Math.random() * 3) + 1}, (_, i) => ({
+                    id: i + 1,
+                    title: `Document ${i + 1}`
+                })) : [];
+            
+            socket.emit('test:simulate_rag', {
+                sessionId: 'test-session-dashboard',
+                query,
+                results,
+                processingTime: Math.floor(Math.random() * 300) + 100
+            });
+        }
+
+        function requestSystemStats() {
+            socket.emit('metrics:request_system');
+        }
+
+        function clearLog() {
+            document.getElementById('eventLog').innerHTML = '<strong>イベントログ:</strong><br>';
+        }
+
+        // 初期化
+        log('メトリクスダッシュボードを初期化中...', 'system');
+        
+        // 5秒ごとにシステム統計をリクエスト
+        setInterval(requestSystemStats, 5000);
+    </script>
+</body>
+</html>

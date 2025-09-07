@@ -1,0 +1,86 @@
+# Cipher MCP Server Configuration
+# Byterover Cipher - Memory layer for coding agents
+
+# Server Mode Configuration
+server:
+  mode: "aggregator"  # or "default"
+  port: 3001
+  host: "localhost"
+
+# LLM Configuration
+llm:
+  provider: "openai"    # openai, anthropic, google
+  model: "gpt-4-turbo"
+  apiKey: "${OPENAI_API_KEY}"
+
+# Memory System Configuration
+memory:
+  # Vector Store Configuration (Knowledge & Reflection Memory)
+  vectorStore:
+    type: "qdrant"      # qdrant, milvus, pinecone
+    host: "localhost"
+    port: 6333
+    collection: "cipher-webui-memory"
+    
+  # Knowledge Graph Configuration
+  knowledgeGraph:
+    enabled: true
+    database: "neo4j"   # neo4j, networkx
+    
+  # Session Database Configuration (SQLite/Postgres)
+  sessionDatabase:
+    type: "sqlite"      # sqlite, postgres
+    path: "/tmp/cipher-sessions.db"
+    
+  # Memory Retention Settings
+  retention:
+    days: 30
+    maxMemories: 10000
+    compressionEnabled: true
+
+# WebUI Integration Settings
+webui:
+  collaboration:
+    enabled: true
+    maxSessionHistory: 50
+    contextWindow: 10000
+    wallBounceTracking: true
+    
+  # User Session Persistence
+  sessionPersistence:
+    enabled: true
+    userSessions: true
+    workspaceMemory: true
+
+# Logging Configuration
+logging:
+  level: "info"
+  file: "/var/log/cipher/cipher.log"
+  format: "json"
+  
+# Security Configuration
+security:
+  authentication:
+    enabled: false      # Enable for production
+    apiKey: "${CIPHER_API_KEY}"
+  
+  rateLimit:
+    enabled: true
+    maxRequestsPerMinute: 100
+    
+# MCP Protocol Settings
+mcp:
+  protocol: "stdio"     # stdio, http, websocket
+  timeout: 5000
+  maxConcurrentRequests: 10
+  
+# External MCP Servers (for aggregator mode)
+mcpServers:
+  filesystem:
+    command: "mcp-server-filesystem"
+    args: ["/tmp"]
+    
+  # Add other MCP servers as needed
+  # database:
+  #   command: "mcp-server-postgres"
+  #   args: ["postgresql://user:pass@localhost/db"]

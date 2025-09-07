@@ -116,6 +116,10 @@ cache/
 mcp-servers/cache/
 mcp-servers/temp/
 
+# MCP servers with embedded git repositories (excluded for security)
+mcp-servers/serena/
+mcp-servers/wall-bounce-tech-support-helper/
+
 # Cipher framework sensitive data
 cipher-framework/keys/
 cipher-framework/sessions/

@@ -272,7 +272,7 @@ app.post('/process', async (req, res) => {
     const task = req.body as TaskRequest;
     
     logger.info('Processing received task', {
-      type: task.type,
+      taskType: task.type,
       requestId: task.requestId,
       timestamp: task.timestamp?.toString()
     });

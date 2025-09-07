@@ -1,148 +1,75 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Minimal guidance for **Claude Code** (claude.ai/code) and similar tools in this repo. Keep this file ≈2 KB; details live in `/docs`.
 
-## Project Overview
+## Principles
 
-This is a Web UI wrapper for the Claude Code CLI tool, designed as a secure terminal interface accessible via web browser. The application consists of a React frontend and a Node.js/Express backend communicating via WebSocket connections.
+* **Wall–Bounce**: always use at least two LLM passes (propose → critique → revise).
+* **/tmp is volatile**: fast scratch only; never store secrets or persistent data.
+* **Security first**: validate inputs, sandbox commands, least privilege, small diffs with tests.
+* **Clear ops**: log actions; prefer actionable errors.
 
-## Architecture
+## Project
 
-- **Frontend**: React application with xterm.js terminal emulator and Socket.IO client
-- **Backend**: TypeScript Node.js server with Express, Socket.IO, JWT authentication, and security middleware
-- **Communication**: WebSocket-based real-time terminal emulation
-- **Security**: JWT authentication, SSL/TLS, input validation, rate limiting, audit logging
+Web terminal UI wrapping the Claude Code CLI. React client ↔ Node/Express (TS) server via WebSocket; REST over HTTPS.
 
-## Development Commands
+## Quick start
 
-### Setup
 ```bash
-# Install all dependencies
 npm install
-cd server && npm install
+cd server && npm install && npm run build
 cd ../client && npm install
-
-# Build TypeScript (server)
-cd server && npm run build
+npm run dev          # runs client+server
+# or:
+cd server && npm run dev
+cd client && npm start
 ```
 
-### Development
-```bash
-# Start both client and server in development mode
-npm run dev
+## Env
 
-# Or start individually:
-cd server && npm run dev    # TypeScript server with hot reload
-cd client && npm start      # React development server
-```
+Create `server/.env` from `.env.example`:
 
-### Production
-```bash
-# Build client for production
-npm run build
+* `JWT_SECRET`
+* `CLAUDE_CODE_PATH`
+* `SSL_CERT_PATH`, `SSL_KEY_PATH`
+* `SESSION_TIMEOUT`
+* `ALLOWED_IPS`
+* `MAX_SESSIONS`
 
-# Start production server
-npm start
+## Security (high level)
 
-# Docker deployment
-docker-compose up -d
-```
+* Enforce HTTPS (TLS 1.2+); HSTS in prod.
+* JWT with short TTL; check on WS upgrade too.
+* Rate‑limit `/auth/*` and WS upgrades.
+* Strict input validation; strip unsupported control sequences.
+* Sandbox subprocess; avoid root; restrict PATH/env.
+* Audit log auth/session/command metadata (no secrets).
+* Use port **443** behind nginx in prod.
 
-### Testing
+## WebSocket (terminal I/O)
 
-**Development (HTTP):**
-```bash
-# Health check
-curl http://localhost:3001/health
+Message shapes:
 
-# Login test  
-curl -X POST http://localhost:3001/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"username":"demo","password":"demo123"}'
-```
+* `input { data }`
+* `resize { cols, rows }`
+* `output { data }`
+* `status { state, reason? }`
 
-**Production (HTTPS via Docker):**
-```bash
-# Generate SSL certificates first (see nginx/ssl/README.md)
-# Then start with Docker Compose
-docker-compose up -d
-
-# Health check
-curl -k https://localhost:443/health
-
-# Login test
-curl -k -X POST https://localhost:443/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"username":"demo","password":"demo123"}'
-
-# Access web interface: https://localhost:443
-```
-
-## Key Architecture Components
-
-### Backend Structure (`/server/src/`)
-- `index.ts` - Main server entry point with SSL/security configuration
-- `services/claudeCodeWrapper.ts` - Handles Claude Code CLI process management
-- `services/socketService.ts` - WebSocket connection and session management
-- `middleware/auth.ts` - JWT authentication and user management
-- `middleware/security.ts` - Security headers, rate limiting, input validation
-- `controllers/authController.ts` - Authentication endpoints
-- `config/` - SSL, logging, and environment configuration
-
-### Frontend Structure (`/client/src/`)
-- React application with Socket.IO client for real-time terminal communication
-- xterm.js integration for terminal emulation
-
-### Security Implementation
-- JWT-based session management with configurable timeout
-- SSL/TLS encryption for all communications
-- Request rate limiting and IP whitelisting
-- Comprehensive audit logging
-- Input validation and sanitization
-- Command execution sandboxing
-
-## Environment Configuration
-
-Required environment variables (see `server/.env.example`):
-- `JWT_SECRET` - JWT signing secret
-- `CLAUDE_CODE_PATH` - Path to Claude Code executable
-- `SSL_CERT_PATH`, `SSL_KEY_PATH` - SSL certificate paths
-- `SESSION_TIMEOUT` - Session timeout in minutes
-- `ALLOWED_IPS` - Comma-separated IP whitelist
-- `MAX_SESSIONS` - Maximum concurrent sessions
-
-## Development Patterns
-
-### TypeScript Usage
-- Full TypeScript implementation in backend
-- Type definitions in `server/src/types/`
-- Proper typing for Socket.IO events and Express middleware
-
-### Security Patterns
-- All routes protected with authentication middleware
-- Command execution wrapped in security validation
-- Session management with automatic cleanup
-- Comprehensive error handling and logging
-
-### WebSocket Communication
-- Structured message types for terminal I/O
-- Session-based command routing
-- Automatic reconnection handling
-- Process lifecycle management
+One socket ↔ one CLI process; tear down on disconnect; client auto‑reconnect with backoff.
 
 ## Deployment
 
-### Docker Compose (Recommended)
-- Multi-container setup with nginx proxy
-- SSL termination and reverse proxy configuration
-- Health checks and restart policies
-- Volume mounting for logs and sessions
+* **Docker Compose**: nginx TLS termination; health checks; named volumes.
+* **Manual**: nginx in front; log rotation & monitoring.
 
-### Manual Deployment
-- nginx reverse proxy required for SSL termination
-- Log rotation and monitoring setup required
+## Further docs
 
-## Additional Documentation
+See `/docs`:
 
-- Security guidelines: @docs/SECURITY.md
-- Troubleshooting: @docs/TROUBLESHOOTING.md
+* `SECURITY.md` – hardening checklist
+* `TROUBLESHOOTING.md` – common fixes
+* `ARCHITECTURE.md` – layout & data flow
+* `WS_PROTOCOL.md` – full message schema
+* `DEPLOYMENT.md` – nginx/compose examples
+* `OBSERVABILITY.md` – logs/metrics/tracing
+

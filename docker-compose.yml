@@ -1,4 +1,18 @@
-version: '3.8'
+version: "3.8"
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+networks:
+  claude-webui-network:
+    driver: bridge
+
+volumes:
+  claude-logs:
+  claude-sessions:
 
 services:
   claude-webui-server:
@@ -10,26 +24,37 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3001
-      - JWT_SECRET=your-super-secret-jwt-key-change-in-production
+      - JWT_SECRET=${JWT_SECRET:?set-in-.env}
       - SESSION_TIMEOUT=30
       - CLAUDE_CODE_PATH=/usr/local/bin/claude
-      - CLAUDE_WORKING_DIR=/tmp/claude-sessions
+      - CLAUDE_WORKING_DIR=/var/claude/sessions
       - MAX_SESSIONS=10
       - RATE_LIMIT_WINDOW_MS=900000
       - RATE_LIMIT_MAX_REQUESTS=100
       - LOG_LEVEL=info
+      # 例: Nodeのメモリ上限を軽めに
+      - NODE_OPTIONS=--max-old-space-size=512
+    env_file:
+      - ./server/.env   # 本番はSecret Manager推奨
     volumes:
-      - ./server/logs:/app/logs
-      - ./server/tmp:/tmp/claude-sessions
+      - claude-logs:/app/logs
+      - claude-sessions:/var/claude/sessions
     networks:
       - claude-webui-network
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    ulimits:
+      nofile: 65536
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      # busybox/wgetでOK。curlがない前提のヘルスチェック
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3001/health >/dev/null 2>&1 || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
+    logging: *default-logging
 
   claude-webui-client:
     build:
@@ -38,13 +63,24 @@ services:
     expose:
       - "3000"
     environment:
-      - REACT_APP_API_URL=https://localhost:443
-      - REACT_APP_WS_URL=wss://localhost:443
+      # 可能なら相対パスに（CD/ホスト切替の手間減）
+      - REACT_APP_API_URL=/ 
+      - REACT_APP_WS_URL=
     depends_on:
       - claude-webui-server
     networks:
       - claude-webui-network
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/ >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   nginx:
     image: nginx:alpine
@@ -56,12 +92,25 @@ services:
       - ./nginx/ssl:/etc/nginx/ssl:ro
       - ./nginx/logs:/var/log/nginx
     depends_on:
-      - claude-webui-server
-      - claude-webui-client
+      claude-webui-server:
+        condition: service_healthy
+      claude-webui-client:
+        condition: service_healthy
     networks:
       - claude-webui-network
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+    logging: *default-logging
+    healthcheck:
+      # /health を server へプロキシできるnginx.conf想定
+      test: ["CMD-SHELL", "wget -qO- http://localhost/health >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
-networks:
-  claude-webui-network:
-    driver: bridge

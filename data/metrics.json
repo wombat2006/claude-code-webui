@@ -1,0 +1,27 @@
+{
+  "daily": {
+    "requests": 1,
+    "tokens": 951,
+    "cost": 0.002853,
+    "date": "Sun Sep 07 2025"
+  },
+  "llmModels": {
+    "gpt-5": {
+      "status": "healthy",
+      "lastLatency": 2301,
+      "successCount": 1,
+      "failureCount": 0,
+      "lastCheck": "4:07:37 AM"
+    }
+  },
+  "rag": {
+    "totalSearches": 1,
+    "successfulRetrievals": 1,
+    "totalProcessingTime": 121,
+    "averageLatency": 121,
+    "hitRate": 100,
+    "lastSearch": "4:07:38 AM",
+    "date": "Sun Sep 07 2025"
+  },
+  "lastSaved": "2025-09-06T19:07:38.807Z"
+}
