@@ -166,14 +166,16 @@ class MetricsService {
     // Save metrics periodically
     await this.saveMetrics();
 
-    // Emit event-driven update
-    this.io.emit('metrics:llm_complete', {
-      tokens: tokens || 0,
-      cost: cost || 0,
-      latency,
-      model,
-      success
-    });
+    // Emit event-driven update via application event emitter
+    if (this.io && typeof this.io.emit === 'function') {
+      this.io.emit('metrics:llm_complete', {
+        tokens: tokens || 0,
+        cost: cost || 0,
+        latency,
+        model,
+        success
+      });
+    }
   }
 
   async saveSessionMetrics(sessionId, metrics) {
