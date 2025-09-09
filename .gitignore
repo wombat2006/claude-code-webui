@@ -123,3 +123,24 @@ mcp-servers/wall-bounce-tech-support-helper/
 # Cipher framework sensitive data
 cipher-framework/keys/
 cipher-framework/sessions/
+
+# Large files that exceed GitHub limits
+*.zip
+*.pdf
+aws-docs-pdfs/
+awscliv2.zip
+server/awscliv2.zip
+
+# Test result directories with session data  
+stress-test-results/
+temp-test-data/
+integration-test-data/
+final-test-results/
+test-data/
+
+# API Keys and Tokens (extra safety)
+*.env.git
+.env.*
+*_pat_*
+*api_key*
+*_token*
