@@ -1,3 +1,6 @@
+// Load environment variables from .env file
+require('dotenv').config();
+
 const express = require('express');
 const http = require('http');
 const https = require('https');
@@ -7,9 +10,100 @@ const { Server } = require('socket.io');
 const SimpleStateSync = require('./services/simpleStateSync');
 const SessionSnapshotWriter = require('./services/sessionSnapshotWriter');
 const LLMGatewayService = require('./services/llmGatewayService');
-const LLMCollaborationService = require('./services/llmCollaborationService');
-const WebUICollaborationService = require('./services/webUICollaborationService');
-const MetricsService = require('./services/metricsService');
+// Try to load compiled TypeScript services, fallback to mock implementations
+let LLMCollaborationService, WebUICollaborationService, MetricsService;
+
+try {
+  ({ LLMCollaborationService } = require('./dist/services/LLMCollaborationService'));
+  ({ WebUICollaborationService } = require('./dist/services/WebUICollaborationService'));
+  ({ MetricsService } = require('./dist/services/MetricsService'));
+} catch (error) {
+  console.warn('TypeScript compiled services not available, using mock implementations');
+  
+  // Mock implementations for testing
+  LLMCollaborationService = class MockLLMCollaborationService {
+    async processCollaborativeQuery(query, options = {}) {
+      return {
+        finalResponse: `Mock collaborative response for: ${query}`,
+        success: true,
+        wallBounceCount: 3,
+        modelResponses: [],
+        metadata: {
+          processingTime: 1000,
+          modelsUsed: options.models || ['claude-4', 'gpt-5'],
+          totalCost: 0.001,
+          totalTokens: 100,
+          quality: 'high',
+          consensus: 0.8
+        }
+      };
+    }
+  };
+
+  WebUICollaborationService = class MockWebUICollaborationService {
+    async processWebUICollaboration(options) {
+      return {
+        finalResponse: `Mock WebUI response for: ${options.query}`,
+        success: true,
+        metadata: {
+          processingTime: 1500
+        }
+      };
+    }
+    
+    async getUserCollaborationHistory(userId, limit = 10) {
+      return {
+        userId,
+        history: [],
+        total: 0
+      };
+    }
+    
+    async resetUserContext(userId) {
+      return true;
+    }
+  };
+
+  MetricsService = class MockMetricsService {
+    constructor() {
+      this.metrics = {
+        systemStats: {
+          memory: { used: 100, total: 4096 },
+          uptime: 3600,
+          connections: 1
+        }
+      };
+    }
+    
+    async recordLLMRequest(sessionId, data) {
+      console.log(`Mock: Recording LLM request for ${sessionId}`, data);
+    }
+    
+    async recordLLMComplete(sessionId, data) {
+      console.log(`Mock: Recording LLM completion for ${sessionId}`, data);
+    }
+    
+    async recordRAGSearch(sessionId, data) {
+      console.log(`Mock: Recording RAG search for ${sessionId}`, data);
+    }
+    
+    async getMetrics() {
+      return {
+        daily: {},
+        llmModels: {},
+        rag: {}
+      };
+    }
+    
+    collectSystemStats() {
+      // Mock implementation
+    }
+    
+    handleSystemStatsRequest(socket) {
+      socket.emit('metrics:system', this.metrics.systemStats);
+    }
+  };
+}
 const S3SnapshotUploader = require('./services/s3SnapshotUploader');
 
 const app = express();
@@ -54,6 +148,174 @@ const llmGateway = new LLMGatewayService({
   defaultMaxReferences: 5
 });
 
+// OpenRouter Client for development environment (memory optimized)
+class OpenRouterClient {
+  constructor() {
+    this.apiKey = process.env.OPENROUTER_API_KEY;
+    this.baseUrl = 'https://openrouter.ai/api/v1';
+    
+    // Response cache with size limit to prevent memory leaks
+    this.responseCache = new Map();
+    this.maxCacheSize = 50; // Limit cache to 50 responses
+    this.cacheTimeout = 5 * 60 * 1000; // 5 minutes
+    
+    if (!this.apiKey) {
+      console.warn('OpenRouter API key not found in environment variables');
+    } else {
+      console.log('OpenRouter client initialized successfully');
+    }
+  }
+  
+  // Clean expired cache entries to prevent memory accumulation
+  _cleanCache() {
+    const now = Date.now();
+    for (const [key, entry] of this.responseCache.entries()) {
+      if (now - entry.timestamp > this.cacheTimeout) {
+        this.responseCache.delete(key);
+      }
+    }
+    // If still over limit, remove oldest entries
+    if (this.responseCache.size > this.maxCacheSize) {
+      const sortedEntries = [...this.responseCache.entries()]
+        .sort((a, b) => a[1].timestamp - b[1].timestamp);
+      const entriesToRemove = this.responseCache.size - this.maxCacheSize;
+      for (let i = 0; i < entriesToRemove; i++) {
+        this.responseCache.delete(sortedEntries[i][0]);
+      }
+    }
+  }
+
+  async queryModel(model, prompt, options = {}) {
+    if (!this.apiKey) {
+      throw new Error('OpenRouter API key not configured');
+    }
+
+    // Clean cache before processing new requests
+    this._cleanCache();
+    
+    // Check cache first
+    const cacheKey = `${model}:${prompt.substring(0, 100)}:${JSON.stringify(options)}`;
+    const cached = this.responseCache.get(cacheKey);
+    if (cached && (Date.now() - cached.timestamp) < this.cacheTimeout) {
+      return { ...cached.response, cached: true };
+    }
+
+    const requestBody = {
+      model: model,
+      messages: [
+        {
+          role: 'user',
+          content: prompt
+        }
+      ],
+      temperature: options.temperature || 0.7,
+      max_tokens: options.maxTokens || 1000
+    };
+
+    try {
+      const fetch = (await import('node-fetch')).default;
+      const response = await fetch(`${this.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': 'https://techsapo.com',
+          'X-Title': 'Claude Code WebUI'
+        },
+        body: JSON.stringify(requestBody)
+      });
+
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`OpenRouter API error: ${response.status} ${error}`);
+      }
+
+      const data = await response.json();
+      
+      const result = {
+        success: true,
+        content: data.choices?.[0]?.message?.content || '',
+        model: data.model || model,
+        usage: {
+          promptTokens: data.usage?.prompt_tokens || 0,
+          completionTokens: data.usage?.completion_tokens || 0,
+          totalTokens: data.usage?.total_tokens || 0
+        },
+        cost: data.usage?.total_cost || 0,
+        provider: 'openrouter'
+      };
+      
+      // Cache successful responses with memory management
+      this.responseCache.set(cacheKey, {
+        response: result,
+        timestamp: Date.now()
+      });
+      
+      return result;
+    } catch (error) {
+      console.error('OpenRouter API error:', error);
+      return {
+        success: false,
+        error: error.message,
+        model: model,
+        provider: 'openrouter'
+      };
+    }
+  }
+
+  // Opus 4.1 specific method
+  async queryOpus41(prompt, options = {}) {
+    return await this.queryModel('anthropic/claude-opus-4.1', prompt, options);
+  }
+
+  // Qwen3 Coder specific method
+  async queryQwen3Coder(prompt, options = {}) {
+    // Try different Qwen Coder models in order of preference
+    const coderModels = [
+      'qwen/qwen3-coder',
+      'qwen/qwen3-coder:free', 
+      'qwen/qwen-2.5-coder-32b-instruct',
+      'qwen/qwen-2.5-coder-32b-instruct:free'
+    ];
+    
+    for (const model of coderModels) {
+      try {
+        console.log(`Trying Qwen Coder model: ${model}`);
+        const result = await this.queryModel(model, prompt, options);
+        if (result.success) {
+          return result;
+        }
+      } catch (error) {
+        console.log(`Model ${model} failed: ${error.message}`);
+        continue;
+      }
+    }
+    
+    return {
+      success: false,
+      error: 'No Qwen Coder models are available',
+      provider: 'openrouter'
+    };
+  }
+
+  // Test connection method
+  async testConnection() {
+    try {
+      const result = await this.queryModel('anthropic/claude-sonnet-4', 'Hello, this is a test. Please respond with "OpenRouter connection successful"', { maxTokens: 50 });
+      return result;
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message,
+        provider: 'openrouter'
+      };
+    }
+  }
+}
+
+// Initialize OpenRouter client
+const openRouterClient = new OpenRouterClient();
+
 // Initialize LLM Collaboration Service (複数LLM協調動作)
 const llmCollaboration = new LLMCollaborationService({
   llmGateway: llmGateway,
@@ -61,17 +323,16 @@ const llmCollaboration = new LLMCollaborationService({
   maxWallBounces: 5
 });
 
-// Initialize WebUI Collaboration Service (Cipher MCP記憶永続化機能付き)
-const webUICollaboration = new WebUICollaborationService({
-  llmGateway: llmGateway,
-  maxSessionHistory: 50,
-  contextWindow: 10000,
-  retentionDays: 30,
+// Initialize WebUI Collaboration Service (TypeScript implementation with Cipher MCP記憶永続化機能付き)
+const webUICollaboration = new WebUICollaborationService(llmCollaboration, {
+  maxSessionHistory: 1000,
+  contextWindow: 2000000,
+  retentionDays: 90,
   // Cipher MCP Configuration
   cipherHost: process.env.CIPHER_MCP_HOST || 'localhost',
   cipherPort: parseInt(process.env.CIPHER_MCP_PORT || '3001'),
-  cipherTimeout: parseInt(process.env.CIPHER_MCP_TIMEOUT || '5000'),
-  cipherEnabled: process.env.CIPHER_MCP_ENABLED === 'true'
+  cipherTimeout: parseInt(process.env.CIPHER_MCP_TIMEOUT || '15000'),
+  enableLogging: true
 });
 
 // Initialize Metrics Service
@@ -419,19 +680,26 @@ app.post('/tokyo/test', async (req, res) => {
   }
 });
 
-// Memory monitoring function
+// Enhanced memory monitoring function with GC triggering
 const monitorMemory = () => {
   const usage = process.memoryUsage();
   const rssUsageMB = Math.round(usage.rss / 1024 / 1024);
+  const heapUsedMB = Math.round(usage.heapUsed / 1024 / 1024);
   
   log('Memory Monitor', {
     rss: `${rssUsageMB}MB`,
     heapTotal: `${Math.round(usage.heapTotal / 1024 / 1024)}MB`,
-    heapUsed: `${Math.round(usage.heapUsed / 1024 / 1024)}MB`,
+    heapUsed: `${heapUsedMB}MB`,
     external: `${Math.round(usage.external / 1024 / 1024)}MB`,
     freeMemory: `${Math.round(require('os').freemem() / 1024 / 1024)}MB`,
     totalMemory: `${Math.round(require('os').totalmem() / 1024 / 1024)}MB`
   });
+
+  // Trigger garbage collection if heap usage is high
+  if (heapUsedMB > 200 && global.gc) {
+    log('🗑️ Triggering garbage collection', { heapUsed: `${heapUsedMB}MB` });
+    global.gc();
+  }
 
   // Alert if memory usage is high (>1.4GB for 1.8GB system)
   if (rssUsageMB > 1400) {
@@ -993,6 +1261,415 @@ app.get('/s3/stats', (req, res) => {
   }
 });
 
+// Test OpenRouter connection
+app.get('/openrouter/test', async (req, res) => {
+  try {
+    log('Testing OpenRouter connection');
+    
+    const connectionTest = await openRouterClient.testConnection();
+    
+    res.json({
+      success: connectionTest.success,
+      result: connectionTest,
+      message: connectionTest.success ? 'OpenRouter connection successful' : 'OpenRouter connection failed'
+    });
+  } catch (error) {
+    log('Failed to test OpenRouter connection', { error: error.message });
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Query Opus 4.1 via OpenRouter
+app.post('/openrouter/opus41', async (req, res) => {
+  try {
+    const { prompt, temperature, maxTokens } = req.body;
+    
+    if (!prompt) {
+      return res.status(400).json({
+        success: false,
+        error: 'Prompt is required'
+      });
+    }
+    
+    log('Querying Opus 4.1 via OpenRouter', { prompt: prompt.substring(0, 100) });
+    
+    const result = await openRouterClient.queryOpus41(prompt, {
+      temperature: temperature || 0.7,
+      maxTokens: maxTokens || 1000
+    });
+    
+    res.json({
+      success: result.success,
+      result: result
+    });
+  } catch (error) {
+    log('Failed to query Opus 4.1', { error: error.message });
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Query Qwen3 Coder via OpenRouter
+app.post('/openrouter/qwen3-coder', async (req, res) => {
+  try {
+    const { prompt, temperature, maxTokens } = req.body;
+    
+    if (!prompt) {
+      return res.status(400).json({
+        success: false,
+        error: 'Prompt is required'
+      });
+    }
+    
+    log('Querying Qwen3 Coder via OpenRouter', { prompt: prompt.substring(0, 100) });
+    
+    const result = await openRouterClient.queryQwen3Coder(prompt, {
+      temperature: temperature || 0.7,
+      maxTokens: maxTokens || 1000
+    });
+    
+    res.json({
+      success: result.success,
+      result: result
+    });
+  } catch (error) {
+    log('Failed to query Qwen3 Coder', { error: error.message });
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Load adaptive wall-bounce configuration (cached)
+// fs and path already required at top of file
+
+let adaptiveConfig;
+try {
+  const configPath = path.join(__dirname, '../adaptive-wallbounce-config.json');
+  adaptiveConfig = JSON.parse(fs.readFileSync(configPath, 'utf8')).adaptiveWallBounce;
+  log('Adaptive wall-bounce configuration loaded', { version: adaptiveConfig.version });
+} catch (error) {
+  log('Failed to load adaptive configuration, using defaults', { error: error.message });
+  adaptiveConfig = {
+    defaultConfig: {
+      maxPasses: 3,
+      minPasses: 2,
+      revisionThreshold: 30,
+      enableEarlyExit: true,
+      costOptimization: true
+    },
+    critiqueSeverityAnalyzer: {
+      severityKeywords: {
+        critical: ['incorrect', 'wrong', 'error', 'false', 'invalid', 'dangerous', 'harmful', 'security'],
+        high: ['improve', 'missing', 'incomplete', 'unclear', 'confusing', 'outdated', 'inefficient'],
+        medium: ['consider', 'suggest', 'recommend', 'alternatively', 'perhaps', 'could'],
+        low: ['minor', 'style', 'formatting', 'preference', 'cosmetic', 'good', 'well']
+      }
+    }
+  };
+}
+
+// Singleton adaptive critique severity scoring system with cached RegExp patterns
+class CritiqueSeverityAnalyzer {
+  constructor(config = adaptiveConfig.critiqueSeverityAnalyzer) {
+    this.severityKeywords = config.severityKeywords;
+    this.positiveIndicators = config.positiveIndicators || ['correct', 'accurate', 'good', 'clear', 'appropriate', 'sufficient'];
+    this.scoring = config.scoring || {
+      weights: { critical: 25, high: 15, medium: 5, low: 1 },
+      adjustments: { positiveThreshold: 3, positiveReduction: 20, shortTextThreshold: 200, shortTextReduction: 15 }
+    };
+    this.severityLevels = config.severityLevels || { critical: 25, high: 15, medium: 5, low: 0 };
+    
+    // Pre-compile RegExp patterns to avoid repeated creation
+    this._positiveRegexes = this.positiveIndicators.map(word => new RegExp(word, 'g'));
+    this._severityRegexes = {};
+    for (const [severity, keywords] of Object.entries(this.severityKeywords)) {
+      this._severityRegexes[severity] = keywords.map(keyword => new RegExp(keyword, 'g'));
+    }
+  }
+
+  analyzeSeverity(critiqueText, thresholdOverride = null) {
+    const text = critiqueText.toLowerCase();
+    const scores = { critical: 0, high: 0, medium: 0, low: 0 };
+    
+    // Check for explicit positive indicators using pre-compiled regexes
+    const positiveMatches = this._positiveRegexes.reduce((count, regex) => {
+      const matches = text.match(regex);
+      return count + (matches ? matches.length : 0);
+    }, 0);
+    
+    // Use pre-compiled regex patterns for severity analysis
+    for (const [severity, regexes] of Object.entries(this._severityRegexes)) {
+      for (const regex of regexes) {
+        const matches = text.match(regex);
+        scores[severity] += (matches ? matches.length : 0);
+      }
+    }
+    
+    // Calculate weighted severity score using config weights
+    const weights = this.scoring.weights;
+    let weightedScore = (scores.critical * weights.critical) + 
+                       (scores.high * weights.high) + 
+                       (scores.medium * weights.medium) + 
+                       (scores.low * weights.low);
+    
+    // Apply positive bias reduction - if critique has many positive words, reduce severity
+    const adj = this.scoring.adjustments;
+    if (positiveMatches >= adj.positiveThreshold) {
+      weightedScore = Math.max(0, weightedScore - adj.positiveReduction);
+    }
+    
+    // Length-based adjustment - very short critiques are often less serious
+    if (text.length < adj.shortTextThreshold) {
+      weightedScore = Math.max(0, weightedScore - adj.shortTextReduction);
+    }
+    
+    const maxPossibleScore = 100; // Normalize to 0-100 scale
+    const finalScore = Math.min(weightedScore, maxPossibleScore);
+    const threshold = thresholdOverride || adaptiveConfig.defaultConfig.revisionThreshold;
+    
+    return {
+      scores,
+      positiveIndicators: positiveMatches,
+      originalScore: weightedScore + (positiveMatches >= adj.positiveThreshold ? adj.positiveReduction : 0) + 
+                     (text.length < adj.shortTextThreshold ? adj.shortTextReduction : 0),
+      weightedScore: finalScore,
+      severity: this.determineSeverityLevel(finalScore),
+      requiresRevision: finalScore >= threshold,
+      threshold: threshold,
+      adjustments: {
+        positiveReduction: positiveMatches >= adj.positiveThreshold ? adj.positiveReduction : 0,
+        shortTextReduction: text.length < adj.shortTextThreshold ? adj.shortTextReduction : 0
+      }
+    };
+  }
+  
+  determineSeverityLevel(score) {
+    if (score >= 25) return 'critical';
+    if (score >= 15) return 'high';
+    if (score >= 5) return 'medium';
+    return 'low';
+  }
+}
+
+// Create singleton severity analyzer to prevent memory leaks
+let globalSeverityAnalyzer = null;
+function getSeverityAnalyzer() {
+  if (!globalSeverityAnalyzer) {
+    globalSeverityAnalyzer = new CritiqueSeverityAnalyzer();
+  }
+  return globalSeverityAnalyzer;
+}
+
+// Adaptive Wall-bounce with intelligent gating (memory optimized)
+app.post('/openrouter/adaptive-wall-bounce', async (req, res) => {
+  try {
+    const { prompt, models, config = {} } = req.body;
+    const severityAnalyzer = getSeverityAnalyzer();
+    
+    // Default configuration from config file
+    const wallBounceConfig = { ...adaptiveConfig.defaultConfig, ...config };
+    
+    if (!prompt) {
+      return res.status(400).json({
+        success: false,
+        error: 'Prompt is required'
+      });
+    }
+    
+    // Model tier strategy from config file
+    const modelStrategy = adaptiveConfig.modelTierStrategy;
+    const useModels = models || [
+      modelStrategy.phases.propose.defaultModel,    // Propose (low-cost)
+      modelStrategy.phases.critique.defaultModel,   // Critique (low-cost)
+      modelStrategy.phases.revise.defaultModel      // Synthesis (premium)
+    ];
+    
+    log('Starting adaptive wall-bounce test', { 
+      prompt: prompt.substring(0, 100), 
+      models: useModels, 
+      config: wallBounceConfig 
+    });
+    
+    const results = [];
+    let currentPrompt = prompt;
+    let critiqueAnalysis = null;
+    
+    // Pass 1: Propose
+    const proposeModel = useModels[0];
+    const proposeResult = await openRouterClient.queryModel(proposeModel, currentPrompt, { maxTokens: 500 });
+    
+    results.push({
+      step: 1,
+      phase: 'propose',
+      model: proposeModel,
+      input: currentPrompt,
+      result: proposeResult
+    });
+    
+    if (!proposeResult.success) {
+      return res.json({
+        success: false,
+        error: 'Failed at propose phase',
+        results
+      });
+    }
+    
+    // Pass 2: Critique
+    const critiqueModel = useModels[1] || useModels[0];
+    const critiquePrompt = `Please provide a detailed critique of the following response. Focus on correctness, completeness, clarity, and potential improvements. Use specific keywords like "incorrect", "missing", "improve", "consider" to indicate severity.
+
+Original question: ${prompt}
+
+Response to critique: ${proposeResult.content}
+
+Provide your critique:`;
+    
+    const critiqueResult = await openRouterClient.queryModel(critiqueModel, critiquePrompt, { maxTokens: 300 });
+    
+    results.push({
+      step: 2,
+      phase: 'critique',
+      model: critiqueModel,
+      input: critiquePrompt,
+      result: critiqueResult
+    });
+    
+    if (critiqueResult.success) {
+      critiqueAnalysis = severityAnalyzer.analyzeSeverity(critiqueResult.content);
+      log('Critique severity analysis', critiqueAnalysis);
+    }
+    
+    // Adaptive gating decision
+    let shouldRevise = false;
+    let gatingReason = 'No critique analysis available';
+    
+    if (critiqueAnalysis) {
+      shouldRevise = critiqueAnalysis.requiresRevision && results.length < wallBounceConfig.maxPasses;
+      gatingReason = `Severity score: ${critiqueAnalysis.weightedScore}, Level: ${critiqueAnalysis.severity}`;
+    }
+    
+    // Pass 3: Revise (conditional)
+    if (shouldRevise) {
+      const reviseModel = useModels[2] || useModels[0];
+      const revisePrompt = `Based on the following critique, please provide an improved response:
+
+Original question: ${prompt}
+Initial response: ${proposeResult.content}
+Critique: ${critiqueResult.content}
+
+Provide an improved, comprehensive response:`;
+      
+      const reviseResult = await openRouterClient.queryModel(reviseModel, revisePrompt, { maxTokens: 600 });
+      
+      results.push({
+        step: 3,
+        phase: 'revise',
+        model: reviseModel,
+        input: revisePrompt,
+        result: reviseResult
+      });
+    }
+    
+    // Determine final response
+    const finalResult = shouldRevise && results.length === 3 ? 
+      results[2].result : 
+      results[0].result;
+    
+    res.json({
+      success: true,
+      prompt,
+      modelsUsed: useModels,
+      config: wallBounceConfig,
+      critiqueAnalysis,
+      gatingDecision: {
+        shouldRevise,
+        reason: gatingReason,
+        passesUsed: results.length
+      },
+      results,
+      finalResponse: finalResult.content
+    });
+    
+  } catch (error) {
+    console.error('Adaptive wall-bounce error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Wall-bounce test with multiple models including OpenRouter
+app.post('/openrouter/wall-bounce', async (req, res) => {
+  try {
+    const { prompt, models } = req.body;
+    
+    if (!prompt) {
+      return res.status(400).json({
+        success: false,
+        error: 'Prompt is required'
+      });
+    }
+    
+    const useModels = models || ['gpt-4', 'anthropic/claude-3.5-sonnet', 'anthropic/claude-opus-4.1'];
+    log('Starting wall-bounce test', { prompt: prompt.substring(0, 100), models: useModels });
+    
+    const results = [];
+    let currentPrompt = prompt;
+    
+    for (let i = 0; i < useModels.length; i++) {
+      const model = useModels[i];
+      const isOpenRouterModel = model.includes('/');
+      
+      let result;
+      if (isOpenRouterModel) {
+        result = await openRouterClient.queryModel(model, currentPrompt, { maxTokens: 500 });
+      } else {
+        // For non-OpenRouter models, use mock or existing LLM gateway
+        result = {
+          success: true,
+          content: `Mock response from ${model} for: ${currentPrompt.substring(0, 50)}...`,
+          model: model,
+          provider: 'mock'
+        };
+      }
+      
+      results.push({
+        step: i + 1,
+        model: model,
+        input: currentPrompt,
+        result: result
+      });
+      
+      if (result.success && result.content) {
+        // Use the response as input for the next model
+        currentPrompt = `Previous response from ${model}: "${result.content}"\n\nPlease review and improve this response for: ${prompt}`;
+      }
+    }
+    
+    res.json({
+      success: true,
+      prompt: prompt,
+      modelsUsed: useModels,
+      results: results,
+      finalResponse: results[results.length - 1]?.result?.content || 'No final response'
+    });
+  } catch (error) {
+    log('Failed wall-bounce test', { error: error.message });
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 // Memory endpoint for monitoring
 app.get('/memory', (req, res) => {
   const memStats = monitorMemory();
@@ -1012,17 +1689,44 @@ app.get('/memory', (req, res) => {
   });
 });
 
-// Start memory monitoring (every minute)
-setInterval(monitorMemory, 60000);
+// Interval management for testable lifecycle
+let memoryMonitorInterval = null;
+let systemStatsInterval = null;
 
-// Start system stats broadcasting (every 5 minutes for background updates)
-setInterval(() => {
-  if (io && io.sockets && io.engine.clientsCount > 0) {
-    metricsService.collectSystemStats();
-    const systemStats = metricsService.metrics.systemStats;
-    io.emit('metrics:system', systemStats);
+function startIntervals() {
+  // Start memory monitoring (every minute)
+  if (!memoryMonitorInterval) {
+    memoryMonitorInterval = setInterval(monitorMemory, 60000);
   }
-}, 300000); // 5 minutes
+
+  // Start system stats broadcasting (every 5 minutes for background updates)
+  if (!systemStatsInterval) {
+    systemStatsInterval = setInterval(() => {
+      if (io && io.sockets && io.engine.clientsCount > 0) {
+        metricsService.collectSystemStats();
+        const systemStats = metricsService.metrics.systemStats;
+        io.emit('metrics:system', systemStats);
+      }
+    }, 300000); // 5 minutes
+  }
+}
+
+function stopIntervals() {
+  if (memoryMonitorInterval) {
+    clearInterval(memoryMonitorInterval);
+    memoryMonitorInterval = null;
+  }
+  
+  if (systemStatsInterval) {
+    clearInterval(systemStatsInterval);
+    systemStatsInterval = null;
+  }
+}
+
+// Start intervals by default (unless in test mode)
+if (!process.env.TEST_MODE) {
+  startIntervals();
+}
 
 // Socket.IO event handlers for dashboard metrics
 io.on('connection', async (socket) => {
@@ -1239,7 +1943,7 @@ app.post('/rag/search', async (req, res) => {
     console.log('RAG search query:', { sessionId, queryLength: query.length, topK });
     
     const startTime = Date.now();
-    const results = await ragStorage.search(query, topK);
+    const results = await llmGateway.ragStorage.search(query, topK);
     const processingTime = Date.now() - startTime;
     
     // Record RAG metrics
@@ -1358,4 +2062,175 @@ server.listen(port, () => {
   `);
 });
 
-module.exports = app;
+// Export lifecycle helpers for integration tests
+function startTestServer(testPort = port) {
+  return new Promise((resolve, reject) => {
+    // Create a new server instance for testing
+    const testServerInstance = http.createServer(app);
+    
+    // Create Socket.IO server for this test instance
+    const testIo = new Server(testServerInstance, {
+      cors: {
+        origin: "*",
+        methods: ["GET", "POST"]
+      }
+    });
+    
+    // Set up Socket.IO event handlers for the test server
+    testIo.on('connection', async (socket) => {
+      log('Test WebSocket client connected', { socketId: socket.id });
+      
+      // Send initial metrics data
+      try {
+        const existingMetrics = metricsService.getAllMetrics();
+        socket.emit('metrics:daily_update', existingMetrics.daily);
+        
+        for (const [model, data] of Object.entries(existingMetrics.llm)) {
+          socket.emit('metrics:llm_health', { model, ...data });
+        }
+        
+        socket.emit('metrics:rag_update', existingMetrics.rag);
+      } catch (err) {
+        log('Error sending initial metrics', err);
+      }
+      
+      // Handle WebSocket events
+      socket.on('metrics:request_system', () => {
+        metricsService.handleSystemStatsRequest(socket);
+      });
+      
+      socket.on('llm:query', async (data) => {
+        try {
+          const result = await llmGateway.queryLLM(
+            { name: data.model || 'claude-4' },
+            data.query || 'Hello',
+            {
+              sessionId: data.sessionId || 'test-session',
+              temperature: data.temperature || 0.7
+            }
+          );
+          
+          socket.emit('llm:response', {
+            id: data.id,
+            success: result.success,
+            response: result.content,
+            latency: result.latency,
+            cost: result.cost,
+            tokens: result.tokens,
+            model: result.model
+          });
+        } catch (error) {
+          socket.emit('llm:response', {
+            id: data.id,
+            success: false,
+            error: error.message
+          });
+        }
+      });
+      
+      socket.on('llm:start_collaboration', async (data) => {
+        try {
+          const collaborationService = require('./services/LLMCollaborationService');
+          const result = await collaborationService.processCollaboration({
+            query: data.query,
+            models: data.models || ['claude-4'],
+            sessionId: data.sessionId || 'test-session',
+            userId: data.userId || 'test-user',
+            taskType: data.taskType || 'general',
+            minWallBounces: data.minWallBounces || 3,
+            maxWallBounces: data.maxWallBounces || 5,
+            useMemory: data.useMemory || false
+          });
+          
+          socket.emit('llm:collaboration_complete', result);
+        } catch (error) {
+          socket.emit('llm:collaboration_error', { 
+            error: error.message,
+            sessionId: data.sessionId,
+            userId: data.userId
+          });
+        }
+      });
+      
+      socket.on('llm:get_user_history', async (data) => {
+        try {
+          const webUIService = require('./services/WebUICollaborationService');
+          const history = await webUIService.getUserHistory(data.userId, data.limit || 10);
+          socket.emit('llm:user_history', history);
+        } catch (error) {
+          socket.emit('llm:user_history_error', { error: error.message });
+        }
+      });
+      
+      socket.on('llm:reset_user_context', async (data) => {
+        try {
+          const webUIService = require('./services/WebUICollaborationService');
+          const success = await webUIService.resetUserContext(data.userId);
+          socket.emit('llm:context_reset', { success, userId: data.userId });
+        } catch (error) {
+          socket.emit('llm:context_reset_error', { error: error.message });
+        }
+      });
+      
+      socket.on('disconnect', () => {
+        log('Test WebSocket client disconnected', { socketId: socket.id });
+      });
+    });
+    
+    testServerInstance.listen(testPort, (err) => {
+      if (err) {
+        reject(err);
+      } else {
+        startIntervals();
+        log('Test server started for integration testing', {
+          port: testPort,
+          mode: 'test'
+        });
+        // Return both server and io instance
+        resolve({ server: testServerInstance, io: testIo });
+      }
+    });
+  });
+}
+
+function stopTestServer(testServerObj = server) {
+  return new Promise((resolve) => {
+    stopIntervals();
+    
+    // Handle both old format (just server) and new format (server + io object)
+    const actualServer = testServerObj.server || testServerObj;
+    const io = testServerObj.io;
+    
+    if (io) {
+      // Close Socket.IO connections
+      io.close();
+    }
+    
+    if (actualServer && actualServer.listening) {
+      actualServer.close((err) => {
+        if (err) {
+          console.error('Error stopping test server:', err);
+        } else {
+          log('Test server stopped for integration testing');
+        }
+        resolve();
+      });
+    } else {
+      resolve();
+    }
+  });
+}
+
+// Export for integration tests
+module.exports = {
+  app,
+  server,
+  startTestServer,
+  stopTestServer,
+  startIntervals,
+  stopIntervals,
+  llmGateway,
+  metricsService,
+  webUICollaboration,
+  llmCollaboration
+};

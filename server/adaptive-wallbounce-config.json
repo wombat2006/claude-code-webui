@@ -1,0 +1,94 @@
+{
+  "adaptiveWallBounce": {
+    "version": "1.0.0",
+    "description": "Adaptive wall-bounce configuration for multi-LLM collaboration with intelligent gating",
+    "defaultConfig": {
+      "maxPasses": 3,
+      "minPasses": 2,
+      "revisionThreshold": 30,
+      "enableEarlyExit": true,
+      "costOptimization": true
+    },
+    "critiqueSeverityAnalyzer": {
+      "severityKeywords": {
+        "critical": ["incorrect", "wrong", "error", "false", "invalid", "dangerous", "harmful", "security"],
+        "high": ["improve", "missing", "incomplete", "unclear", "confusing", "outdated", "inefficient"],
+        "medium": ["consider", "suggest", "recommend", "alternatively", "perhaps", "could"],
+        "low": ["minor", "style", "formatting", "preference", "cosmetic", "good", "well"]
+      },
+      "positiveIndicators": ["correct", "accurate", "good", "clear", "appropriate", "sufficient"],
+      "scoring": {
+        "weights": {
+          "critical": 25,
+          "high": 15,
+          "medium": 5,
+          "low": 1
+        },
+        "adjustments": {
+          "positiveThreshold": 3,
+          "positiveReduction": 20,
+          "shortTextThreshold": 200,
+          "shortTextReduction": 15
+        }
+      },
+      "severityLevels": {
+        "critical": 25,
+        "high": 15,
+        "medium": 5,
+        "low": 0
+      }
+    },
+    "modelTierStrategy": {
+      "description": "Cost-effective model assignment by phase",
+      "phases": {
+        "propose": {
+          "defaultModel": "meta-llama/llama-3.3-8b-instruct:free",
+          "alternatives": ["meta-llama/llama-4-scout:free"],
+          "cost": "free",
+          "purpose": "Initial response generation"
+        },
+        "critique": {
+          "defaultModel": "meta-llama/llama-4-scout:free", 
+          "alternatives": ["meta-llama/llama-3.3-8b-instruct:free"],
+          "cost": "free",
+          "purpose": "Detailed critique and analysis"
+        },
+        "revise": {
+          "defaultModel": "anthropic/claude-3.5-sonnet",
+          "alternatives": ["openai/gpt-4o-mini", "google/gemini-2.5-flash"],
+          "cost": "premium",
+          "purpose": "High-quality synthesis and revision"
+        }
+      }
+    },
+    "endpoints": {
+      "adaptiveWallBounce": "/openrouter/adaptive-wall-bounce",
+      "standardWallBounce": "/openrouter/wall-bounce"
+    },
+    "presets": {
+      "conservative": {
+        "revisionThreshold": 50,
+        "description": "Only revise for high-severity issues"
+      },
+      "balanced": {
+        "revisionThreshold": 30,
+        "description": "Default balanced approach"
+      },
+      "thorough": {
+        "revisionThreshold": 10,
+        "description": "Revise for most critique suggestions"
+      }
+    },
+    "monitoring": {
+      "logLevel": "info",
+      "trackMetrics": [
+        "passesUsed",
+        "critiqueScore", 
+        "gatingDecisions",
+        "responseTime",
+        "tokenUsage",
+        "costPerRequest"
+      ]
+    }
+  }
+}
