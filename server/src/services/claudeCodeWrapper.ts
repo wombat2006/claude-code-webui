@@ -1,3 +1,4 @@
+import { getErrorMessage } from '../utils/errorHandling';
 import { spawn, ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
 import path from 'path';
@@ -111,8 +112,8 @@ export class ClaudeCodeWrapper extends EventEmitter {
 
     } catch (error) {
       session.isActive = false;
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      logger.error('Failed to start Claude Code session', error as Error, { sessionId });
+      const errorMessage = error instanceof Error ? getErrorMessage(error) : 'Unknown error';
+      logger.error('Failed to start Claude Code session', error instanceof Error ? error : new Error(String(error)), { sessionId });
       throw new CommandExecutionError(`Failed to start session: ${errorMessage}`);
     }
   }
@@ -183,12 +184,12 @@ export class ClaudeCodeWrapper extends EventEmitter {
 
       claudeProcess.on('error', (error) => {
         logger.error('Claude Code process error', error, { sessionId });
-        this.emit('error', sessionId, error.message);
+        this.emit('error', sessionId, getErrorMessage(error));
       });
 
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      logger.error('Failed to execute command', error as Error, { 
+      const errorMessage = error instanceof Error ? getErrorMessage(error) : 'Unknown error';
+      logger.error('Failed to execute command', error instanceof Error ? error : new Error(String(error)), { 
         sessionId, 
         command 
       });
@@ -224,7 +225,7 @@ export class ClaudeCodeWrapper extends EventEmitter {
       });
 
     } catch (error) {
-      logger.error('Failed to terminate session', error as Error, { sessionId });
+      logger.error('Failed to terminate session', error instanceof Error ? error : new Error(String(error)), { sessionId });
     }
   }
 

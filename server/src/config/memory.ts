@@ -1,4 +1,5 @@
-import { logger } from './logger';
+import logger from './logger';
+import { toError } from '../utils/errorHandling';
 
 interface MemoryConfig {
   maxOldSpaceSize: number; // MB
@@ -78,7 +79,7 @@ export class MemoryManager {
           });
         }
       } catch (error) {
-        logger.error('Garbage collection failed', error);
+        logger.error('Garbage collection failed', toError(error));
       }
     }
   }

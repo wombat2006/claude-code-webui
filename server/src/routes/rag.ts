@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { ragController } from '../controllers/ragController';
-import { authenticateToken } from '../middleware/auth';
+import { verifyToken } from '../middleware/auth';
 import rateLimit from 'express-rate-limit';
 
 const router = Router();
@@ -31,7 +31,7 @@ const uploadRateLimit = rateLimit({
 });
 
 // Apply authentication to all RAG routes
-router.use(authenticateToken);
+router.use(verifyToken);
 
 // Document search and retrieval
 router.get('/search', searchRateLimit, ragController.searchDocuments.bind(ragController));

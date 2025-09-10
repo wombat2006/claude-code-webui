@@ -2,7 +2,7 @@ import { DynamoDBStreamEvent, DynamoDBRecord, Context } from 'aws-lambda';
 import { ApiGatewayManagementApi } from '@aws-sdk/client-apigatewaymanagementapi';
 import { DynamoDBClient, QueryCommand } from '@aws-sdk/client-dynamodb';
 import { unmarshall } from '@aws-sdk/util-dynamodb';
-import { logger } from '../config/logger';
+import logger from '../config/logger';
 
 interface StreamProcessorConfig {
   apiGatewayEndpoint: string;
@@ -60,7 +60,7 @@ export class StreamProcessor {
           notifications.push(notification);
         }
       } catch (error) {
-        logger.error('Error processing stream record:', error);
+        logger.error('Error processing stream record:', error instanceof Error ? error : new Error(String(error)));
         // Continue processing other records
       }
     }
@@ -214,7 +214,7 @@ export class StreamProcessor {
         );
       }
     } catch (error) {
-      logger.error('Error distributing notifications:', error);
+      logger.error('Error distributing notifications:', error instanceof Error ? error : new Error(String(error)));
     }
   }
 
@@ -246,7 +246,7 @@ export class StreamProcessor {
         };
       });
     } catch (error) {
-      logger.error('Failed to get active connections:', error);
+      logger.error('Failed to get active connections:', error instanceof Error ? error : new Error(String(error)));
       return [];
     }
   }
@@ -318,7 +318,7 @@ export class StreamProcessor {
         logger.info(`Stale connection ${connection.connectionId}, cleaning up`);
         await this.cleanupConnection(connection.connectionId);
       } else {
-        logger.error(`Failed to send notification to connection ${connection.connectionId}:`, error);
+        logger.error(`Failed to send notification to connection ${connection.connectionId}:`, error instanceof Error ? error : new Error(String(error)));
       }
     }
   }
@@ -337,7 +337,7 @@ export class StreamProcessor {
       // This would be followed by a DeleteItem command in a real implementation
       logger.debug(`Connection ${connectionId} marked for cleanup`);
     } catch (error) {
-      logger.error(`Failed to cleanup connection ${connectionId}:`, error);
+      logger.error(`Failed to cleanup connection ${connectionId}:`, error instanceof Error ? error : new Error(String(error)));
     }
   }
 
@@ -354,7 +354,7 @@ export class StreamProcessor {
       });
       logger.info(`Test notification sent to ${connectionId}`);
     } catch (error) {
-      logger.error(`Failed to send test notification to ${connectionId}:`, error);
+      logger.error(`Failed to send test notification to ${connectionId}:`, error instanceof Error ? error : new Error(String(error)));
       throw error;
     }
   }
@@ -371,7 +371,7 @@ export const lambdaHandler = async (event: DynamoDBStreamEvent, context: Context
   try {
     await processor.processStreamRecords(event, context);
   } catch (error) {
-    logger.error('Stream processing failed:', error);
+    logger.error('Stream processing failed:', error instanceof Error ? error : new Error(String(error)));
     throw error;
   }
 };

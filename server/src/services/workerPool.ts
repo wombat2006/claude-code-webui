@@ -1,9 +1,10 @@
+import { toError, getErrorMessage } from '../utils/errorHandling';
 import { EventEmitter } from 'events';
-import { logger } from '../config/logger';
+import logger from '../config/logger';
 import * as http from 'http';
 import * as https from 'https';
 
-interface WorkerNode {
+export interface WorkerNode {
   id: string;
   host: string;
   port: number;
@@ -140,7 +141,7 @@ export class WorkerPool extends EventEmitter {
           worker.currentJobs = 0;
         }
       } catch (error) {
-        logger.error(`Health check failed for worker ${worker.id}:`, error);
+        logger.error(`Health check failed for worker ${worker.id}:`, toError(error));
         worker.healthy = false;
       }
     });
@@ -279,7 +280,7 @@ export class WorkerPool extends EventEmitter {
               reject(new Error(`Worker returned status ${res.statusCode}: ${responseData}`));
             }
           } catch (error) {
-            reject(new Error(`Invalid response from worker: ${error.message}`));
+            reject(new Error(`Invalid response from worker: ${getErrorMessage(error)}`));
           }
         });
       });

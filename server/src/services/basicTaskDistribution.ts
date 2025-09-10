@@ -1,5 +1,6 @@
-import fetch from 'node-fetch';
+// Use built-in fetch instead of node-fetch for Node 18+
 import logger from '../config/logger';
+import { getErrorMessage } from '../utils/errorHandling';
 
 export interface TaskRequest {
   type: string;
@@ -37,14 +38,19 @@ export class BasicTaskDistribution {
         tokyoUrl: this.tokyoVMUrl
       });
 
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
+      
       const response = await fetch(`${this.tokyoVMUrl}/process`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(task),
-        timeout: 30000 // 30秒タイムアウト
+        signal: controller.signal,
       });
+      
+      clearTimeout(timeoutId);
 
       if (!response.ok) {
         throw new Error(`Tokyo VM responded with ${response.status}: ${response.statusText}`);
@@ -66,9 +72,9 @@ export class BasicTaskDistribution {
 
     } catch (error) {
       const processingTime = Date.now() - startTime;
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const errorMessage = getErrorMessage(error);
       
-      logger.error('Failed to communicate with Tokyo VM', error as Error, {
+      logger.error('Failed to communicate with Tokyo VM', error instanceof Error ? error : new Error(String(error)), {
         requestId: task.requestId,
         processingTime,
         tokyoUrl: this.tokyoVMUrl
@@ -90,10 +96,15 @@ export class BasicTaskDistribution {
     const startTime = Date.now();
     
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      
       const response = await fetch(`${this.tokyoVMUrl}/health`, {
         method: 'GET',
-        timeout: 10000 // 10秒タイムアウト
+        signal: controller.signal,
       });
+      
+      clearTimeout(timeoutId);
 
       if (!response.ok) {
         return {
@@ -108,7 +119,7 @@ export class BasicTaskDistribution {
     } catch (error) {
       return {
         alive: false,
-        error: error instanceof Error ? error.message : 'Connection failed'
+        error: getErrorMessage(error)
       };
     }
   }

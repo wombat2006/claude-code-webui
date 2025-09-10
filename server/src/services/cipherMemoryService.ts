@@ -1,6 +1,7 @@
-import { s3RagService } from './s3RagService';
-import { distributedStateManager } from './distributedStateManager';
-import { logger } from '../config/logger';
+// import { s3RagService } from './s3RagService'; // Disabled for WebUI restore
+// import { distributedStateManager } from './distributedStateManager'; // Disabled for WebUI restore
+import logger from '../config/logger';
+import { toError } from '../utils/errorHandling';
 import { createHash } from 'crypto';
 
 interface CipherMemory {
@@ -147,7 +148,7 @@ export class CipherMemoryService {
 
       return memoryEntry;
     } catch (error) {
-      logger.error('Failed to store Cipher memory:', error as Error, {
+      logger.error('Failed to store Cipher memory:', error instanceof Error ? error : new Error(String(error)), {
         userId,
         type,
         context: context.substring(0, 100)
@@ -246,7 +247,7 @@ export class CipherMemoryService {
 
       return recall;
     } catch (error) {
-      logger.error('Failed to recall Cipher memories:', error as Error, {
+      logger.error('Failed to recall Cipher memories:', error instanceof Error ? error : new Error(String(error)), {
         userId: query.userId,
         context: query.context.substring(0, 100)
       });
@@ -322,7 +323,7 @@ export class CipherMemoryService {
         model: conversation.model
       });
     } catch (error) {
-      logger.error('Failed to store conversation memory:', error as Error, {
+      logger.error('Failed to store conversation memory:', error instanceof Error ? error : new Error(String(error)), {
         userId,
         sessionId
       });
@@ -406,7 +407,7 @@ export class CipherMemoryService {
 
       return continuityContext;
     } catch (error) {
-      logger.error('Failed to generate continuity context:', error as Error, {
+      logger.error('Failed to generate continuity context:', error instanceof Error ? error : new Error(String(error)), {
         userId,
         sessionId
       });
@@ -454,7 +455,8 @@ export class CipherMemoryService {
 
     try {
       // Try to get from DynamoDB first (for real-time access)
-      const stateResults = await distributedStateManager.getFromCache(`cipher_memory_${cacheKey}`);
+      // const stateResults = await distributedStateManager.getFromCache(`cipher_memory_${cacheKey}`);
+      const stateResults = null; // Disabled for WebUI restore
       if (stateResults) {
         const memory = JSON.parse(stateResults.value) as CipherMemory;
         this.memoryCache.set(cacheKey, { memory, timestamp: Date.now() });
@@ -462,12 +464,13 @@ export class CipherMemoryService {
       }
 
       // Fallback to S3 RAG search
-      const ragResults = await s3RagService.searchDocuments({
-        query: `cipher_memory_${userId}`,
-        type: 'conversation',
-        tags: ['cipher-memory'],
-        limit: 1
-      });
+      // const ragResults = await s3RagService.searchDocuments({
+      //   query: `cipher_memory_${userId}`,
+      //   type: 'conversation',
+      //   tags: ['cipher-memory'],
+      //   limit: 1
+      // });
+      const ragResults: any[] = []; // Disabled for WebUI restore
 
       if (ragResults.length > 0) {
         const memory = JSON.parse(ragResults[0].document.content) as CipherMemory;
@@ -477,7 +480,7 @@ export class CipherMemoryService {
 
       return null;
     } catch (error) {
-      logger.error('Failed to get Cipher memory:', error);
+      logger.error('Failed to get Cipher memory:', toError(error));
       return null;
     }
   }
@@ -490,28 +493,28 @@ export class CipherMemoryService {
       this.memoryCache.set(cacheKey, { memory, timestamp: Date.now() });
 
       // Save to DynamoDB for real-time access
-      await distributedStateManager.setCache({
-        key: `cipher_memory_${cacheKey}`,
-        value: memory,
-        type: 'cipher',
-        createdAt: Date.now(),
-        region: process.env.AWS_REGION || 'us-east-1'
-      });
+      // await distributedStateManager.setCache({
+      //   key: `cipher_memory_${cacheKey}`,
+      //   value: memory,
+      //   type: 'cipher',
+      //   createdAt: Date.now(),
+      //   region: process.env.AWS_REGION || 'us-east-1'
+      // });
 
       // Also save to S3 RAG for long-term storage and search
-      await s3RagService.storeDocument({
-        title: `Cipher Memory: ${memory.userId}`,
-        content: JSON.stringify(memory, null, 2),
-        metadata: {
-          source: 'cipher-memory',
-          type: 'conversation',
-          project: 'cipher-continuity',
-          tags: ['cipher-memory', memory.userId, memory.contextHash],
-          createdAt: memory.metadata.createdAt,
-          updatedAt: memory.metadata.updatedAt,
-          size: JSON.stringify(memory).length
-        }
-      });
+      // await s3RagService.storeDocument({
+      //         title: `Cipher Memory: ${memory.userId}`,
+      //         content: JSON.stringify(memory, null, 2),
+      //         metadata: {
+      //           source: 'cipher-memory',
+      //           type: 'conversation',
+      //           project: 'cipher-continuity',
+      //           tags: ['cipher-memory', memory.userId, memory.contextHash],
+      //           createdAt: memory.metadata.createdAt,
+      //           updatedAt: memory.metadata.updatedAt,
+      //           size: JSON.stringify(memory).length
+      //         }
+      // });
 
       logger.debug('Cipher memory saved', {
         userId: memory.userId,
@@ -520,7 +523,7 @@ export class CipherMemoryService {
         longTermCount: memory.memories.longTerm.length
       });
     } catch (error) {
-      logger.error('Failed to save Cipher memory:', error);
+      logger.error('Failed to save Cipher memory:', toError(error));
       throw error;
     }
   }

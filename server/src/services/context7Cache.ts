@@ -1,5 +1,7 @@
 import { spawn } from 'child_process';
-import { logger } from '../config/logger';
+import logger from '../config/logger';
+import { RedisClientType } from 'redis';
+import { getRedis } from './redis';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -19,150 +21,117 @@ interface LibraryMetadata {
 }
 
 export class Context7Cache {
-  private redis: Redis;
+  private redis: RedisClientType;
   private ttl: number;
   private maxLibraries: number;
   private isConnected: boolean = false;
 
   constructor(config: Context7CacheConfig = {}) {
-    this.redis = new Redis(config.redisUrl || process.env.REDIS_URL || 'redis://localhost:6379');
+    this.redis = null as any; // Will be initialized in init()
     this.ttl = config.ttl || 3600; // 1 hour default
     this.maxLibraries = config.maxLibraries || 1000;
-    
-    this.redis.on('connect', () => {
+    this.init();
+  }
+
+  private async init() {
+    try {
+      this.redis = await getRedis();
       this.isConnected = true;
-      logger.info('Context7 Cache: Connected to Redis');
-    });
-    
-    this.redis.on('error', (err) => {
+      logger.info('Context7Cache: Redis connection established');
+    } catch (error) {
+      logger.error('Context7Cache: Redis connection failed', error instanceof Error ? error : new Error(String(error)));
       this.isConnected = false;
-      logger.error('Context7 Cache: Redis error', err);
-    });
+    }
   }
 
   private getCacheKey(type: 'library-list' | 'library-docs', query: string): string {
     return `context7:${type}:${Buffer.from(query).toString('base64')}`;
   }
 
-  async getLibraryList(query?: string): Promise<LibraryMetadata[] | null> {
-    if (!this.isConnected) return null;
+  async searchLibraries(query: string): Promise<LibraryMetadata[]> {
+    if (!this.isConnected) {
+      return this.directSearchLibraries(query);
+    }
+
+    const cacheKey = this.getCacheKey('library-list', query);
     
     try {
-      const cacheKey = this.getCacheKey('library-list', query || 'all');
+      // Try to get from cache first
       const cached = await this.redis.get(cacheKey);
-      
       if (cached) {
-        logger.info(`Context7 Cache: Library list cache hit for query: ${query}`);
-        return JSON.parse(cached);
+        logger.debug(`Context7 Cache: Cache hit for library search: ${query}`);
+        return JSON.parse(cached as string);
+      }
+
+      // Cache miss, perform direct search
+      const results = await this.directSearchLibraries(query);
+      
+      // Cache the results
+      if (results.length > 0) {
+        await this.redis.setEx(cacheKey, this.ttl, JSON.stringify(results));
+        logger.debug(`Context7 Cache: Cached library search results for: ${query}`);
       }
       
-      logger.info(`Context7 Cache: Library list cache miss for query: ${query}`);
-      return null;
+      return results;
     } catch (error) {
-      logger.error('Context7 Cache: Error getting library list from cache', error);
-      return null;
+      logger.error('Context7 Cache: Error in searchLibraries', error instanceof Error ? error : new Error(String(error)));
+      // Fallback to direct search
+      return this.directSearchLibraries(query);
     }
   }
 
-  async cacheLibraryList(libraries: LibraryMetadata[], query?: string): Promise<void> {
-    if (!this.isConnected) return;
-    
-    try {
-      const cacheKey = this.getCacheKey('library-list', query || 'all');
-      
-      // Limit the number of libraries to cache
-      const limitedLibraries = libraries.slice(0, this.maxLibraries);
-      
-      await this.redis.setex(cacheKey, this.ttl, JSON.stringify(limitedLibraries));
-      logger.info(`Context7 Cache: Cached ${limitedLibraries.length} libraries for query: ${query}`);
-    } catch (error) {
-      logger.error('Context7 Cache: Error caching library list', error);
+  async getLibraryDocs(libraryId: string): Promise<any> {
+    if (!this.isConnected) {
+      return this.directGetLibraryDocs(libraryId);
     }
-  }
 
-  async getLibraryDocs(libraryId: string): Promise<string | null> {
-    if (!this.isConnected) return null;
+    const cacheKey = this.getCacheKey('library-docs', libraryId);
     
     try {
-      const cacheKey = this.getCacheKey('library-docs', libraryId);
+      // Try to get from cache first
       const cached = await this.redis.get(cacheKey);
-      
       if (cached) {
-        logger.info(`Context7 Cache: Library docs cache hit for: ${libraryId}`);
-        return cached;
+        logger.debug(`Context7 Cache: Cache hit for library docs: ${libraryId}`);
+        return JSON.parse(cached as string);
+      }
+
+      // Cache miss, fetch directly
+      const docs = await this.directGetLibraryDocs(libraryId);
+      
+      // Cache the documentation
+      if (docs) {
+        await this.redis.setEx(cacheKey, this.ttl, JSON.stringify(docs));
+        logger.debug(`Context7 Cache: Cached library docs for: ${libraryId}`);
       }
       
-      logger.info(`Context7 Cache: Library docs cache miss for: ${libraryId}`);
-      return null;
+      return docs;
     } catch (error) {
-      logger.error('Context7 Cache: Error getting library docs from cache', error);
-      return null;
+      logger.error('Context7 Cache: Error in getLibraryDocs', error instanceof Error ? error : new Error(String(error)));
+      // Fallback to direct fetch
+      return this.directGetLibraryDocs(libraryId);
     }
   }
 
-  async cacheLibraryDocs(libraryId: string, docs: string): Promise<void> {
-    if (!this.isConnected) return;
-    
-    try {
-      const cacheKey = this.getCacheKey('library-docs', libraryId);
-      
-      // Cache docs for shorter time as they change more frequently
-      const docsTtl = Math.floor(this.ttl / 2); // 30 minutes if ttl is 1 hour
-      
-      await this.redis.setex(cacheKey, docsTtl, docs);
-      logger.info(`Context7 Cache: Cached docs for library: ${libraryId}`);
-    } catch (error) {
-      logger.error('Context7 Cache: Error caching library docs', error);
-    }
+  private async directSearchLibraries(query: string): Promise<LibraryMetadata[]> {
+    return this.callContext7({
+      type: 'search-libraries',
+      query,
+      maxResults: this.maxLibraries
+    });
   }
 
-  async resolveLibraryId(query: string): Promise<any> {
-    // Check cache first
-    const cached = await this.getLibraryList(query);
-    if (cached && cached.length > 0) {
-      return cached.find(lib => 
-        lib.name.toLowerCase().includes(query.toLowerCase()) ||
-        lib.id.toLowerCase().includes(query.toLowerCase())
-      );
-    }
-
-    // If not in cache, call Context7 directly
-    return this.callContext7('resolve-library-id', { query });
+  private async directGetLibraryDocs(libraryId: string): Promise<any> {
+    return this.callContext7({
+      type: 'get-library-docs',
+      libraryId
+    });
   }
 
-  async getLibraryDocumentation(libraryId: string): Promise<string> {
-    // Check cache first
-    const cached = await this.getLibraryDocs(libraryId);
-    if (cached) {
-      return cached;
-    }
-
-    // If not in cache, call Context7 directly
-    const docs = await this.callContext7('get-library-docs', { libraryId });
-    
-    // Cache the result
-    if (docs && typeof docs === 'string') {
-      await this.cacheLibraryDocs(libraryId, docs);
-    }
-    
-    return docs;
-  }
-
-  private async callContext7(method: string, params: any): Promise<any> {
+  private async callContext7(request: any): Promise<any> {
     return new Promise((resolve, reject) => {
-      const child = spawn('npx', ['--yes', '@upstash/context7-mcp'], {
+      const child = spawn('context7', ['--json'], {
         stdio: ['pipe', 'pipe', 'pipe']
       });
-
-      const request = {
-        jsonrpc: '2.0',
-        id: Date.now(),
-        method: `tools/call`,
-        params: {
-          name: method,
-          arguments: params
-        }
-      };
 
       let stdout = '';
       let stderr = '';
@@ -178,14 +147,14 @@ export class Context7Cache {
       child.on('close', (code) => {
         if (code === 0) {
           try {
-            const response = JSON.parse(stdout);
-            resolve(response.result || response);
-          } catch (error) {
-            logger.error('Context7 Cache: Error parsing Context7 response', error);
+            const result = JSON.parse(stdout);
+            resolve(result);
+          } catch (parseError) {
+            logger.error('Context7 Cache: Failed to parse Context7 response', parseError instanceof Error ? parseError : new Error(String(parseError)));
             resolve(null);
           }
         } else {
-          logger.error('Context7 Cache: Context7 process error', { code, stderr });
+          logger.error('Context7 Cache: Context7 process error', new Error(`Context7 process failed (code: ${code}): ${stderr}`));
           reject(new Error(`Context7 process failed: ${stderr}`));
         }
       });
@@ -202,11 +171,11 @@ export class Context7Cache {
     try {
       const keys = await this.redis.keys('context7:*');
       if (keys.length > 0) {
-        await this.redis.del(...keys);
+        await this.redis.del(keys);
         logger.info(`Context7 Cache: Cleared ${keys.length} cache entries`);
       }
     } catch (error) {
-      logger.error('Context7 Cache: Error clearing cache', error);
+      logger.error('Context7 Cache: Error clearing cache', error instanceof Error ? error : new Error(String(error)));
     }
   }
 
@@ -226,20 +195,20 @@ export class Context7Cache {
         ttl: this.ttl
       };
     } catch (error) {
-      logger.error('Context7 Cache: Error getting cache stats', error);
-      return { connected: false, error: error.message };
+      logger.error('Context7 Cache: Error getting cache stats', error instanceof Error ? error : new Error(String(error)));
+      return { connected: false, error: error instanceof Error ? error.message : String(error) };
     }
   }
 
   async disconnect(): Promise<void> {
-    await this.redis.quit();
-    this.isConnected = false;
-    logger.info('Context7 Cache: Disconnected from Redis');
+    if (this.isConnected && this.redis) {
+      try {
+        await this.redis.quit();
+        this.isConnected = false;
+        logger.info('Context7 Cache: Disconnected from Redis');
+      } catch (error) {
+        logger.error('Context7 Cache: Error disconnecting from Redis', error instanceof Error ? error : new Error(String(error)));
+      }
+    }
   }
 }
-
-// Export singleton instance
-export const context7Cache = new Context7Cache({
-  ttl: parseInt(process.env.CONTEXT7_CACHE_TTL || '3600'),
-  maxLibraries: parseInt(process.env.CONTEXT7_MAX_LIBRARIES || '1000')
-});

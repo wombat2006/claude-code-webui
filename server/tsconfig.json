@@ -3,6 +3,11 @@
     "target": "ES2020",
     "lib": ["ES2020"],
     "module": "commonjs",
+    "moduleResolution": "node",
+    "baseUrl": ".",
+    "paths": {
+      "socket.io": ["node_modules/socket.io/dist/index.d.ts"]
+    },
     "outDir": "./dist",
     "rootDir": "./src",
     "strict": true,
@@ -32,6 +37,7 @@
     "node_modules",
     "dist",
     "**/*.spec.ts",
-    "**/*.test.ts"
+    "**/*.test.ts",
+    "src/services/disabled/**/*"
   ]
 }

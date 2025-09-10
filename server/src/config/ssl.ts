@@ -2,6 +2,7 @@ import fs from 'fs';
 import https from 'https';
 import { ServerConfig } from '../types';
 import logger from './logger';
+import { getErrorMessage } from '../utils/errorHandling';
 
 // SSL/TLS Configuration for HTTPS server
 export const createSSLOptions = (config: ServerConfig): https.ServerOptions | null => {
@@ -68,8 +69,8 @@ export const createSSLOptions = (config: ServerConfig): https.ServerOptions | nu
 
     return sslOptions;
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    logger.error('Failed to load SSL certificates', error as Error);
+    const errorMessage = error instanceof Error ? getErrorMessage(error) : 'Unknown error';
+    logger.error('Failed to load SSL certificates', error instanceof Error ? error : new Error(String(error)));
     throw new Error(`SSL configuration error: ${errorMessage}`);
   }
 };

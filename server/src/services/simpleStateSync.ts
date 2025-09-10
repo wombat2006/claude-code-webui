@@ -1,6 +1,6 @@
-import { distributedStateManager } from './distributedStateManager';
-import { sessionManager } from './sessionManager';
-import { logger } from '../config/logger';
+// import { distributedStateManager } from './distributedStateManager'; // Disabled for WebUI restore
+// import { sessionManager } from './sessionManager'; // Disabled for WebUI restore
+import logger from '../config/logger';
 import { EventEmitter } from 'events';
 
 interface SyncedSession {
@@ -51,7 +51,7 @@ export class SimpleStateSync extends EventEmitter {
         await this.checkForSessionChanges();
         await new Promise(resolve => setTimeout(resolve, this.pollInterval));
       } catch (error) {
-        logger.error('Error during sync polling:', error);
+        logger.error('Error during sync polling:', error instanceof Error ? error : new Error(String(error)));
         await new Promise(resolve => setTimeout(resolve, this.pollInterval));
       }
     }
@@ -59,14 +59,16 @@ export class SimpleStateSync extends EventEmitter {
 
   private async checkForSessionChanges(): Promise<void> {
     // Get all active sessions from local cache
-    const activeSessions = await sessionManager.getActiveSessions();
+    // const activeSessions = await sessionManager.getActiveSessions(); // Disabled for WebUI restore
+    const activeSessions: any[] = [];
     
     for (const session of activeSessions) {
       try {
         const currentSync = this.syncedSessions.get(session.sessionId);
         
         // Get latest version from DynamoDB
-        const latestSession = await distributedStateManager.getSession(session.sessionId);
+        // const latestSession = await distributedStateManager.getSession(session.sessionId); // Disabled for WebUI restore
+        const latestSession = null;
         
         if (latestSession && (!currentSync || latestSession.version > currentSync.version)) {
           // Session has been updated from another region
@@ -91,7 +93,7 @@ export class SimpleStateSync extends EventEmitter {
           logger.debug(`Session ${session.sessionId} synced from remote (v${latestSession.version})`);
         }
       } catch (error) {
-        logger.error(`Failed to sync session ${session.sessionId}:`, error);
+        logger.error(`Failed to sync session ${session.sessionId}:`, error instanceof Error ? error : new Error(String(error)));
       }
     }
   }
@@ -106,7 +108,7 @@ export class SimpleStateSync extends EventEmitter {
           'Authorization': `Bearer ${process.env.TOKYO_API_KEY}`
         },
         body: JSON.stringify(notification),
-        timeout: 5000
+        signal: AbortSignal.timeout(5000)
       });
 
       if (!response.ok) {
@@ -125,7 +127,8 @@ export class SimpleStateSync extends EventEmitter {
     try {
       if (notification.type === 'session_change' && notification.sessionId) {
         // Force refresh session from DynamoDB
-        await sessionManager.refreshSession(notification.sessionId);
+        // await sessionManager.refreshSession(notification.sessionId); // Disabled for WebUI restore
+        console.debug('[SimpleStateSync] Stub: refreshSession called for', notification.sessionId);
         
         this.emit('remoteSessionChange', {
           sessionId: notification.sessionId,
@@ -134,7 +137,7 @@ export class SimpleStateSync extends EventEmitter {
         });
       }
     } catch (error) {
-      logger.error('Failed to handle remote notification:', error);
+      logger.error('Failed to handle remote notification:', error instanceof Error ? error : new Error(String(error)));
     }
   }
 

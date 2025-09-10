@@ -1,6 +1,7 @@
 import dotenv from 'dotenv';
 import express from 'express';
 import { createServer } from 'http';
+import { getErrorMessage } from './utils/errorHandling';
 import cors from 'cors';
 import { 
   ipWhitelist, 
@@ -14,18 +15,20 @@ import {
 import { 
   loginLimiter, 
   validateLogin, 
-  verifyToken, 
+  verifyAuth, 
   login, 
   logout, 
   getCurrentUser 
-} from './middleware/auth';
+} from './middleware/simpleAuth';
 import { handleValidationErrors } from './middleware/security';
 import { SocketService } from './services/socketService';
 import { claudeCodeWrapper } from './services/claudeCodeWrapper';
-import { AuthenticatedRequest, ServerConfig } from './types';
+import { SimpleAuthRequest, AuthenticatedRequest, ServerConfig } from './types';
 import logger from './config/logger';
 import context7Routes from './routes/context7Routes';
 import { taskDistribution, TaskRequest } from './services/basicTaskDistribution';
+import { ensureSingleInstance, initMcpAutostart, stopAllMcp } from './services/mcpManager';
+import { getRedis, closeRedis } from './services/redis';
 
 // Load environment variables
 dotenv.config();
@@ -48,8 +51,9 @@ const config: ServerConfig = {
 };
 
 // Validate critical configuration
-if (config.jwtSecret === 'dev-secret-change-in-production' && process.env.NODE_ENV === 'production') {
-  logger.error('Critical security error: JWT_SECRET must be set in production');
+const adminPassword = process.env.ADMIN_PASSWORD || 'admin';
+if ((adminPassword === 'admin' || adminPassword === 'CHANGE_ME_IN_PRODUCTION') && process.env.NODE_ENV === 'production') {
+  logger.error('Critical security error: ADMIN_PASSWORD must be changed in production');
   process.exit(1);
 }
 
@@ -77,11 +81,18 @@ app.use(cors(corsOptions));
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
+// Cookie parser for session management
+import cookieParser from 'cookie-parser';
+app.use(cookieParser());
+
 // Request size validation
 app.use(limitRequestSize(1024 * 1024)); // 1MB
 
 // Rate limiting
 app.use(generalLimiter);
+
+// Static files for login page
+app.use('/static', express.static('src/public'));
 
 // Health check endpoint (public)
 app.get('/health', (req, res) => {
@@ -104,23 +115,23 @@ app.post('/auth/login',
 );
 
 app.post('/auth/logout', 
-  verifyToken,
+  verifyAuth,
   logout
 );
 
 app.get('/auth/me', 
-  verifyToken,
+  verifyAuth,
   getCurrentUser
 );
 
 // API routes (all require authentication)
-app.use('/api', verifyToken);
+app.use('/api', verifyAuth);
 
 // Context7 routes
 app.use('/api/context7', context7Routes);
 
 // Server info endpoint
-app.get('/api/server-info', (req: AuthenticatedRequest, res) => {
+app.get('/api/server-info', (req: SimpleAuthRequest, res) => {
   const sessionStats = claudeCodeWrapper.getSessionStats();
   
   res.json({
@@ -167,8 +178,8 @@ app.post('/api/session/create', async (req: AuthenticatedRequest, res) => {
       message: 'Session created successfully'
     });
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    logger.error('Failed to create session', error as Error, {
+    const errorMessage = error instanceof Error ? getErrorMessage(error) : 'Unknown error';
+    logger.error('Failed to create session', error instanceof Error ? error : new Error(String(error)), {
       username: req.user?.username,
       ip: req.ip
     });
@@ -191,7 +202,7 @@ app.get('/api/session/stats', (req: AuthenticatedRequest, res) => {
       maxSessions: config.maxSessions
     });
   } catch (error) {
-    logger.error('Failed to get session stats', error as Error);
+    logger.error('Failed to get session stats', error instanceof Error ? error : new Error(String(error)));
     res.status(500).json({ error: 'Failed to get session statistics' });
   }
 });
@@ -202,10 +213,10 @@ app.get('/api/claude/health', async (req, res) => {
     const health = await claudeCodeWrapper.healthCheck();
     res.json(health);
   } catch (error) {
-    logger.error('Claude Code health check failed', error as Error);
+    logger.error('Claude Code health check failed', error instanceof Error ? error : new Error(String(error)));
     res.status(500).json({
       status: 'unhealthy',
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? getErrorMessage(error) : 'Unknown error'
     });
   }
 });
@@ -220,10 +231,10 @@ app.get('/api/tokyo/health', async (req: AuthenticatedRequest, res) => {
       checkedBy: req.user?.username
     });
   } catch (error) {
-    logger.error('Tokyo VM health check failed', error as Error);
+    logger.error('Tokyo VM health check failed', error instanceof Error ? error : new Error(String(error)));
     res.status(500).json({
       error: 'Tokyo VM health check failed',
-      details: error instanceof Error ? error.message : 'Unknown error'
+      details: error instanceof Error ? getErrorMessage(error) : 'Unknown error'
     });
   }
 });
@@ -256,10 +267,10 @@ app.post('/api/tokyo/test', async (req: AuthenticatedRequest, res) => {
       localMemory: process.memoryUsage()
     });
   } catch (error) {
-    logger.error('Tokyo VM test failed', error as Error);
+    logger.error('Tokyo VM test failed', error instanceof Error ? error : new Error(String(error)));
     res.status(500).json({
       error: 'Tokyo VM test failed',
-      details: error instanceof Error ? error.message : 'Unknown error'
+      details: error instanceof Error ? getErrorMessage(error) : 'Unknown error'
     });
   }
 });
@@ -327,10 +338,10 @@ app.post('/process', async (req, res) => {
     res.json(response);
     
   } catch (error) {
-    logger.error('Task processing failed', error as Error);
+    logger.error('Task processing failed', error instanceof Error ? error : new Error(String(error)));
     res.status(500).json({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
+      error: error instanceof Error ? getErrorMessage(error) : 'Unknown error',
       processingTime: Date.now() - startTime,
       memoryUsage: process.memoryUsage()
     });
@@ -338,7 +349,48 @@ app.post('/process', async (req, res) => {
 });
 
 // Error handling middleware
-app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (res.headersSent) {
+    return next(err);
+  }
+
+  // Handle body-parser payload size errors (413)
+  if (err.type === 'entity.too.large' || err.status === 413) {
+    logger.audit('Request payload too large', {
+      path: req.path,
+      method: req.method,
+      ip: req.ip,
+      userAgent: req.get('User-Agent')
+    });
+    return res.status(413).json({
+      error: 'Payload Too Large',
+      message: 'Request payload exceeds the 1MB limit'
+    });
+  }
+
+  // Handle body-parser malformed JSON errors (400)
+  if (err.type === 'entity.parse.failed' || (err.status === 400 && err.type)) {
+    logger.audit('Malformed request body', {
+      path: req.path,
+      method: req.method,
+      ip: req.ip,
+      userAgent: req.get('User-Agent')
+    });
+    return res.status(400).json({
+      error: 'Bad Request',
+      message: 'Invalid JSON in request body'
+    });
+  }
+
+  // Handle validation errors (preserve 400 status)
+  if (err.name === 'ValidationError' || (err.status === 400 && !err.type)) {
+    return res.status(400).json({
+      error: 'Validation Error',
+      message: err.message || 'Request validation failed'
+    });
+  }
+
+  // Log all other errors
   logger.error('Unhandled error', err, {
     path: req.path,
     method: req.method,
@@ -346,15 +398,12 @@ app.use((err: Error, req: express.Request, res: express.Response, next: express.
     userAgent: req.get('User-Agent')
   });
 
-  if (res.headersSent) {
-    return next(err);
-  }
-
   const isDevelopment = process.env.NODE_ENV === 'development';
+  const status = err.status || err.statusCode || 500;
   
-  res.status(500).json({
-    error: 'Internal server error',
-    message: isDevelopment ? err.message : 'Something went wrong',
+  res.status(status).json({
+    error: status === 500 ? 'Internal Server Error' : err.message,
+    message: isDevelopment ? err.message : (status === 500 ? 'Something went wrong' : err.message),
     stack: isDevelopment ? err.stack : undefined
   });
 });
@@ -378,30 +427,36 @@ app.use('*', (req, res) => {
 const socketService = new SocketService(httpServer);
 
 // Graceful shutdown handler
-const gracefulShutdown = (signal: string) => {
+const gracefulShutdown = async (signal: string) => {
   logger.info(`Received ${signal}, starting graceful shutdown...`);
   
-  httpServer.close(() => {
-    logger.info('HTTP server closed');
+  try {
+    // Stop MCP processes first
+    await stopAllMcp();
+    
+    // Close Redis connection
+    await closeRedis();
+    
+    // Close HTTP server
+    await new Promise<void>((resolve) => {
+      httpServer.close(() => {
+        logger.info('HTTP server closed');
+        resolve();
+      });
+    });
     
     // Close all active Claude Code sessions
     const activeSessions = claudeCodeWrapper.getActiveSessions();
-    Promise.all(
+    await Promise.all(
       activeSessions.map(sessionId => claudeCodeWrapper.terminateSession(sessionId))
-    ).then(() => {
-      logger.info('All Claude Code sessions terminated');
-      process.exit(0);
-    }).catch(error => {
-      logger.error('Error during session cleanup', error);
-      process.exit(1);
-    });
-  });
-  
-  // Force close after 10 seconds
-  setTimeout(() => {
-    logger.error('Forceful shutdown after timeout');
+    );
+    
+    logger.info('Graceful shutdown completed');
+    process.exit(0);
+  } catch (error) {
+    logger.error('Error during graceful shutdown', error instanceof Error ? error : new Error(String(error)));
     process.exit(1);
-  }, 10000);
+  }
 };
 
 // Handle shutdown signals
@@ -410,7 +465,7 @@ process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 // Handle uncaught exceptions
 process.on('uncaughtException', (error) => {
-  logger.error('Uncaught Exception', error);
+  logger.error('Uncaught Exception', error instanceof Error ? error : new Error(String(error)));
   process.exit(1);
 });
 
@@ -421,27 +476,44 @@ process.on('unhandledRejection', (reason, promise) => {
   process.exit(1);
 });
 
-// Start server
-httpServer.listen(config.port, () => {
-  logger.info('Claude Code WebUI Server started', {
-    port: config.port,
-    environment: process.env.NODE_ENV || 'development',
-    nodeVersion: process.version,
-    maxSessions: config.maxSessions,
-    sessionTimeout: config.sessionTimeout,
-    claudeCodePath: config.claudeCodePath
-  });
+// Initialize services and start server
+async function startServer() {
+  try {
+    // Ensure single instance
+    await ensureSingleInstance();
+    
+    // Initialize Redis connection
+    await getRedis();
+    
+    // Initialize MCP services if autostart is enabled
+    if (process.env.DISABLE_MCP_AUTOSTART !== '1') {
+      await initMcpAutostart();
+    } else {
+      logger.info('MCP autostart disabled by environment variable');
+    }
+    
+    // Start HTTP server
+    httpServer.listen(config.port, () => {
+      logger.info('Claude Code WebUI Server started', {
+        port: config.port,
+        environment: process.env.NODE_ENV || 'development',
+        nodeVersion: process.version,
+        maxSessions: config.maxSessions,
+        sessionTimeout: config.sessionTimeout,
+        claudeCodePath: config.claudeCodePath,
+        mcpAutostart: process.env.DISABLE_MCP_AUTOSTART !== '1'
+      });
 
   // Log configuration warnings
-  if (config.jwtSecret === 'dev-secret-change-in-production') {
-    logger.warn('Using default JWT secret - change in production!');
+  if (adminPassword === 'demo123' || adminPassword === 'CHANGE_ME_IN_PRODUCTION') {
+    logger.warn('Using default admin password - change in production!');
   }
   
   if (!config.allowedIPs && process.env.NODE_ENV === 'production') {
     logger.warn('No IP whitelist configured - all IPs allowed in production!');
   }
   
-  console.log(`
+      console.log(`
 ╭─────────────────────────────────────────────────╮
 │                                                 │
 │   🚀 Claude Code WebUI Server                   │
@@ -452,8 +524,16 @@ httpServer.listen(config.port, () => {
 │   ⏱️  Timeout: ${config.sessionTimeout} minutes                    │
 │                                                 │
 ╰─────────────────────────────────────────────────╯
-  `);
-});
+      `);
+    });
+  } catch (error) {
+    logger.error('Failed to start server', error instanceof Error ? error : new Error(String(error)));
+    process.exit(1);
+  }
+}
+
+// Start the server
+startServer();
 
 // Export for testing
 export { app, httpServer, config };

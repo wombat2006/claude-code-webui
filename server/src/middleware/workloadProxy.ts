@@ -1,6 +1,7 @@
+import { getErrorMessage, toError } from '../utils/errorHandling';
 import { Request, Response, NextFunction } from 'express';
 import { workloadDistributor } from '../services/workloadDistributor';
-import { logger } from '../config/logger';
+import logger from '../config/logger';
 
 interface ProxyConfig {
   routes: {
@@ -147,12 +148,12 @@ export class WorkloadProxy {
         });
 
       } catch (error) {
-        logger.error(`Proxy error for ${routeKey}:`, error);
+        logger.error(`Proxy error for ${routeKey}:`, toError(error));
         
         // Send error response
         res.status(500).json({
           success: false,
-          error: error.message,
+          error: getErrorMessage(error),
           taskType: route.taskType,
           distributed: true
         });
@@ -218,7 +219,7 @@ export function proxyControllerMethod(taskType: string, timeout: number = 60000)
         });
 
       } catch (error) {
-        logger.error(`Proxied method ${propertyKey} failed:`, error);
+        logger.error(`Proxied method ${propertyKey} failed:`, toError(error));
         
         // Fallback to original method if configured
         if (process.env.PROXY_FALLBACK === 'true') {
@@ -227,7 +228,7 @@ export function proxyControllerMethod(taskType: string, timeout: number = 60000)
 
         res.status(500).json({
           success: false,
-          error: error.message,
+          error: getErrorMessage(error),
           distributed: true
         });
       }

@@ -1,5 +1,6 @@
+import { toError, getErrorMessage } from '../utils/errorHandling';
 import { WorkerPool } from './workerPool';
-import { logger } from '../config/logger';
+import logger from '../config/logger';
 
 export interface WorkloadConfig {
   mainVmRole: 'coordinator' | 'hybrid'; // coordinator: only routing, hybrid: light tasks + routing
@@ -110,7 +111,7 @@ export class WorkloadDistributor {
       const jobId = await this.workerPool.submitJob(taskType, payload, timeout);
       return await this.workerPool.waitForJob(jobId);
     } catch (error) {
-      logger.error(`Worker execution failed for ${taskType}:`, error);
+      logger.error(`Worker execution failed for ${taskType}:`, toError(error));
       
       // Fallback to local execution if enabled
       if (options.fallbackLocal !== false && this.config.mainVmRole === 'hybrid') {
@@ -183,7 +184,7 @@ export class WorkloadDistributor {
       }
       return { content };
     } catch (error) {
-      throw new Error(`File read failed: ${error.message}`);
+      throw new Error(`File read failed: ${getErrorMessage(error)}`);
     }
   }
 

@@ -1,0 +1,83 @@
+version: '3.8'
+
+services:
+  claude-webui:
+    build:
+      context: .
+      dockerfile: Dockerfile.production
+    container_name: claude-webui-server
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+    env_file:
+      - .env.production
+    ports:
+      - "3001:3001"
+    volumes:
+      - claude-sessions:/var/lib/claude-sessions
+      - logs:/var/log/claude-webui
+      - /usr/local/bin/claude-code-wrapper.sh:/usr/local/bin/claude-code-wrapper.sh:ro
+    depends_on:
+      - redis
+    networks:
+      - claude-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
+        reservations:
+          memory: 512M
+          cpus: '0.25'
+
+  redis:
+    image: redis:7-alpine
+    container_name: claude-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    networks:
+      - claude-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  nginx:
+    image: nginx:1.24-alpine
+    container_name: claude-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/sites-available/default:ro
+      - /etc/ssl/certs/techsapo.com.pem:/etc/ssl/certs/techsapo.com.pem:ro
+      - /etc/ssl/private/techsapo.com.key:/etc/ssl/private/techsapo.com.key:ro
+      - nginx-logs:/var/log/nginx
+    depends_on:
+      - claude-webui
+    networks:
+      - claude-network
+
+volumes:
+  redis-data:
+    driver: local
+  claude-sessions:
+    driver: local
+  logs:
+    driver: local
+  nginx-logs:
+    driver: local
+
+networks:
+  claude-network:
+    driver: bridge

@@ -1,6 +1,9 @@
 import { Request, Response } from 'express';
-import { context7Cache } from '../services/context7Cache';
-import { logger } from '../config/logger';
+import { Context7Cache } from '../services/context7Cache';
+import logger from '../config/logger';
+import { toError, getErrorMessage } from '../utils/errorHandling';
+
+const context7Cache = new Context7Cache();
 
 export class Context7Controller {
   
@@ -14,7 +17,7 @@ export class Context7Controller {
 
       logger.info(`Context7: Resolving library for query: ${query}`);
       
-      const result = await context7Cache.resolveLibraryId(query);
+      const result = await context7Cache.searchLibraries(query);
       
       res.json({
         success: true,
@@ -24,11 +27,11 @@ export class Context7Controller {
       });
 
     } catch (error) {
-      logger.error('Context7: Error resolving library', error);
+      logger.error('Context7: Error resolving library', toError(error));
       res.status(500).json({ 
         success: false, 
         error: 'Failed to resolve library',
-        message: error.message 
+        message: getErrorMessage(error) 
       });
     }
   }
@@ -43,7 +46,7 @@ export class Context7Controller {
 
       logger.info(`Context7: Getting docs for library: ${libraryId}`);
       
-      const docs = await context7Cache.getLibraryDocumentation(libraryId);
+      const docs = await context7Cache.getLibraryDocs(libraryId);
       
       res.json({
         success: true,
@@ -53,11 +56,11 @@ export class Context7Controller {
       });
 
     } catch (error) {
-      logger.error('Context7: Error getting library docs', error);
+      logger.error('Context7: Error getting library docs', toError(error));
       res.status(500).json({ 
         success: false, 
         error: 'Failed to get library documentation',
-        message: error.message 
+        message: getErrorMessage(error) 
       });
     }
   }
@@ -72,11 +75,11 @@ export class Context7Controller {
       });
 
     } catch (error) {
-      logger.error('Context7: Error getting cache stats', error);
+      logger.error('Context7: Error getting cache stats', toError(error));
       res.status(500).json({ 
         success: false, 
         error: 'Failed to get cache stats',
-        message: error.message 
+        message: getErrorMessage(error) 
       });
     }
   }
@@ -91,11 +94,11 @@ export class Context7Controller {
       });
 
     } catch (error) {
-      logger.error('Context7: Error clearing cache', error);
+      logger.error('Context7: Error clearing cache', toError(error));
       res.status(500).json({ 
         success: false, 
         error: 'Failed to clear cache',
-        message: error.message 
+        message: getErrorMessage(error) 
       });
     }
   }
@@ -111,7 +114,7 @@ export class Context7Controller {
       logger.info(`Context7: Searching libraries for: ${q}`);
       
       // Try to get from cache first
-      const cached = await context7Cache.getLibraryList(q as string);
+      const cached = await context7Cache.searchLibraries(q as string);
       
       if (cached) {
         const limitedResults = cached.slice(0, parseInt(limit as string));
@@ -136,11 +139,11 @@ export class Context7Controller {
       });
 
     } catch (error) {
-      logger.error('Context7: Error searching libraries', error);
+      logger.error('Context7: Error searching libraries', toError(error));
       res.status(500).json({ 
         success: false, 
         error: 'Failed to search libraries',
-        message: error.message 
+        message: getErrorMessage(error) 
       });
     }
   }

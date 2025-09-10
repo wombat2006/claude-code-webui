@@ -1,7 +1,7 @@
 import { DynamoDBClient, GetItemCommand, PutItemCommand, UpdateItemCommand, DeleteItemCommand, QueryCommand } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { marshall, unmarshall } from '@aws-sdk/util-dynamodb';
-import { logger } from '../config/logger';
+import logger from '../config/logger';
 import { EventEmitter } from 'events';
 
 interface SessionState {
@@ -92,7 +92,7 @@ export class DistributedStateManager extends EventEmitter {
       const item = unmarshall(result.Item);
       return this.transformToSessionState(item);
     } catch (error) {
-      logger.error(`Failed to get session ${sessionId}:`, error);
+      logger.error(`Failed to get session ${sessionId}:`, error instanceof Error ? error : new Error(String(error)));
       throw new Error(`Session retrieval failed: ${error}`);
     }
   }
@@ -145,7 +145,7 @@ export class DistributedStateManager extends EventEmitter {
         logger.warn(`Optimistic lock failed for session ${session.sessionId}. Expected version: ${expectedVersion}, current version may be newer.`);
         throw new Error('SESSION_VERSION_CONFLICT');
       }
-      logger.error(`Failed to save session ${session.sessionId}:`, error);
+      logger.error(`Failed to save session ${session.sessionId}:`, error instanceof Error ? error : new Error(String(error)));
       throw error;
     }
   }
@@ -161,7 +161,7 @@ export class DistributedStateManager extends EventEmitter {
       this.emit('sessionDeleted', sessionId);
       logger.debug(`Session ${sessionId} deleted`);
     } catch (error) {
-      logger.error(`Failed to delete session ${sessionId}:`, error);
+      logger.error(`Failed to delete session ${sessionId}:`, error instanceof Error ? error : new Error(String(error)));
       throw error;
     }
   }
@@ -200,7 +200,7 @@ export class DistributedStateManager extends EventEmitter {
       if (error.name === 'ConditionalCheckFailedException') {
         throw new Error('TASK_ALREADY_EXISTS');
       }
-      logger.error(`Failed to create task ${task.taskId}:`, error);
+      logger.error(`Failed to create task ${task.taskId}:`, error instanceof Error ? error : new Error(String(error)));
       throw error;
     }
   }
@@ -281,7 +281,7 @@ export class DistributedStateManager extends EventEmitter {
         logger.warn(`Task ${taskId} owner region check failed or lease expired`);
         throw new Error('TASK_OWNERSHIP_ERROR');
       }
-      logger.error(`Failed to update task ${taskId}:`, error);
+      logger.error(`Failed to update task ${taskId}:`, error instanceof Error ? error : new Error(String(error)));
       throw error;
     }
   }
@@ -301,7 +301,7 @@ export class DistributedStateManager extends EventEmitter {
 
       return this.transformToTaskState(unmarshall(result.Item));
     } catch (error) {
-      logger.error(`Failed to get task ${taskId}:`, error);
+      logger.error(`Failed to get task ${taskId}:`, error instanceof Error ? error : new Error(String(error)));
       throw error;
     }
   }
@@ -331,7 +331,7 @@ export class DistributedStateManager extends EventEmitter {
 
       return this.transformToCacheEntry(item);
     } catch (error) {
-      logger.error(`Failed to get cache entry ${key}:`, error);
+      logger.error(`Failed to get cache entry ${key}:`, error instanceof Error ? error : new Error(String(error)));
       return null; // Don't throw for cache misses
     }
   }
@@ -360,7 +360,7 @@ export class DistributedStateManager extends EventEmitter {
       
       logger.debug(`Cache entry ${entry.key} set with type ${entry.type}`);
     } catch (error) {
-      logger.error(`Failed to set cache entry ${entry.key}:`, error);
+      logger.error(`Failed to set cache entry ${entry.key}:`, error instanceof Error ? error : new Error(String(error)));
       // Don't throw for cache writes - app should continue
     }
   }
@@ -375,7 +375,7 @@ export class DistributedStateManager extends EventEmitter {
       await this.dynamoClient.send(command);
       logger.debug(`Cache entry ${key} deleted`);
     } catch (error) {
-      logger.error(`Failed to delete cache entry ${key}:`, error);
+      logger.error(`Failed to delete cache entry ${key}:`, error instanceof Error ? error : new Error(String(error)));
     }
   }
 
@@ -451,7 +451,7 @@ export class DistributedStateManager extends EventEmitter {
         latency
       };
     } catch (error) {
-      logger.error('Health check failed:', error);
+      logger.error('Health check failed:', error instanceof Error ? error : new Error(String(error)));
       return {
         healthy: false,
         region: this.region,

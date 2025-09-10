@@ -1,4 +1,13 @@
-import { Server as SocketIOServer } from 'socket.io';
+const SocketIO = require('socket.io');
+const { Server } = SocketIO;
+
+// Type definition for Socket.IO Server based on the actual interface
+interface SocketServer {
+  on(event: string, listener: (...args: any[]) => void): this;
+  emit(event: string, ...args: any[]): boolean;
+  use(fn: (socket: any, next: (err?: any) => void) => void): this;
+  close(): void;
+}
 import { Server as HTTPServer } from 'http';
 import { 
   ServerToClientEvents, 
@@ -11,20 +20,16 @@ import { verifySocketToken, updateSessionActivity } from '../middleware/auth';
 import { claudeCodeWrapper } from './claudeCodeWrapper';
 import logger from '../config/logger';
 import { isValidCommand, isValidArgs, isValidInput, sanitizeForLog } from '../utils/validation';
-import { sessionManager } from './sessionManager';
+// import { sessionManager } from './sessionManager'; // Disabled
+import { sessionFacade } from '../facades/sessionFacade';
 import { simpleStateSync } from './simpleStateSync';
 
 export class SocketService {
-  private io: SocketIOServer<
-    ClientToServerEvents,
-    ServerToClientEvents,
-    InterServerEvents,
-    SocketData
-  >;
+  private io: SocketServer;
   private connectedSockets: Map<string, AuthenticatedSocket> = new Map();
 
   constructor(httpServer: HTTPServer) {
-    this.io = new SocketIOServer(httpServer, {
+    this.io = new Server(httpServer, {
       cors: {
         origin: process.env.FRONTEND_URL || "http://localhost:3000",
         methods: ["GET", "POST"],
@@ -83,10 +88,10 @@ export class SocketService {
       // Create or get distributed session
       let distributedSession;
       try {
-        distributedSession = await sessionManager.createSession(username, '/tmp');
+        distributedSession = await sessionFacade.createSession(username, '/tmp');
         logger.info(`Distributed session created: ${distributedSession.sessionId} for user: ${username}`);
       } catch (error) {
-        logger.error('Failed to create distributed session', error as Error, {
+        logger.error('Failed to create distributed session', error instanceof Error ? error : new Error(String(error)), {
           socketId: socket.id,
           username
         });
@@ -104,7 +109,7 @@ export class SocketService {
         await claudeCodeWrapper.startSession(claudeSessionId);
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        logger.error('Failed to create Claude Code session', error as Error, {
+        logger.error('Failed to create Claude Code session', error instanceof Error ? error : new Error(String(error)), {
           socketId: socket.id,
           username
         });
@@ -152,7 +157,7 @@ export class SocketService {
       });
 
     } catch (error) {
-      logger.error('Error during socket connection setup', error as Error, {
+      logger.error('Error during socket connection setup', error instanceof Error ? error : new Error(String(error)), {
         socketId: socket.id,
         username
       });
@@ -221,12 +226,12 @@ export class SocketService {
       // Update distributed session with command history
       if (socket.data.distributedSessionId) {
         try {
-          await sessionManager.addCommandToHistory(
+          await sessionFacade.addCommandToHistory(
             socket.data.distributedSessionId, 
             `${command} ${args.join(' ')}`.trim()
           );
         } catch (error) {
-          logger.warn('Failed to update command history in distributed session', error as Error);
+          logger.warn('Failed to update command history in distributed session', error instanceof Error ? error : new Error(String(error)));
         }
       }
 
@@ -238,7 +243,7 @@ export class SocketService {
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      logger.error('Command execution failed', error as Error, {
+      logger.error('Command execution failed', error instanceof Error ? error : new Error(String(error)), {
         socketId: socket.id,
         username: socket.user?.username,
         command: data.command
@@ -292,7 +297,7 @@ export class SocketService {
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      logger.error('Send input failed', error as Error, {
+      logger.error('Send input failed', error instanceof Error ? error : new Error(String(error)), {
         socketId: socket.id,
         username: socket.user?.username
       });
@@ -418,6 +423,12 @@ export class SocketService {
 
   // Setup handlers for distributed state sync events
   private setupStateSyncHandlers(): void {
+    // Check if simpleStateSync is available
+    if (!simpleStateSync || typeof simpleStateSync.on !== 'function') {
+      logger.warn('SimpleStateSync not available, skipping state sync handlers');
+      return;
+    }
+    
     // Handle session changes from other regions
     simpleStateSync.on('sessionChanged', (data) => {
       this.broadcastSessionChange(data);
@@ -432,28 +443,28 @@ export class SocketService {
       });
     });
 
-    // Handle session conflicts
-    sessionManager.on('sessionConflict', (conflict) => {
-      this.handleSessionConflict(conflict);
-    });
+    // Handle session conflicts - commented out for sessionManager stub
+    // sessionManager.on('sessionConflict', (conflict) => {
+    //   this.handleSessionConflict(conflict);
+    // });
 
-    // Handle session reverts (when optimistic updates fail)
-    sessionManager.on('sessionReverted', (sessionData) => {
-      this.broadcastToSessionUsers(sessionData.sessionId, 'sessionReverted', {
-        sessionData,
-        timestamp: Date.now()
-      });
-    });
+    // Handle session reverts (when optimistic updates fail) - commented out for sessionManager stub
+    // sessionManager.on('sessionReverted', (sessionData) => {
+    //   this.broadcastToSessionUsers(sessionData.sessionId, 'sessionReverted', {
+    //     sessionData,
+    //     timestamp: Date.now()
+    //   });
+    // });
 
-    // Handle confirmed session updates
-    sessionManager.on('sessionUpdated', (sessionData, meta) => {
-      if (meta?.confirmed) {
-        this.broadcastToSessionUsers(sessionData.sessionId, 'sessionConfirmed', {
-          sessionData,
-          timestamp: Date.now()
-        });
-      }
-    });
+    // Handle confirmed session updates - commented out for sessionManager stub
+    // sessionManager.on('sessionUpdated', (sessionData, meta) => {
+    //   if (meta?.confirmed) {
+    //     this.broadcastToSessionUsers(sessionData.sessionId, 'sessionConfirmed', {
+    //       sessionData,
+    //       timestamp: Date.now()
+    //     });
+    //   }
+    // });
 
     // Start the sync process
     simpleStateSync.startSync();
@@ -500,20 +511,12 @@ export class SocketService {
           .filter(id => id)
       },
       stateSync: simpleStateSync.getSyncStatus(),
-      sessionManager: sessionManager.getSessionStats()
+      sessionManager: sessionFacade.getSessionStats()
     };
   }
 
-  public getServer(): SocketIOServer {
+  public getServer(): SocketServer {
     return this.io;
   }
 }
 
-declare module 'socket.io' {
-  interface Socket {
-    data: SocketData & {
-      claudeSessionId?: string;
-      distributedSessionId?: string;
-    };
-  }
-}

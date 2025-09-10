@@ -1,3 +1,4 @@
+import { getErrorMessage } from '../utils/errorHandling';
 /**
  * Language Utilities
  * Unified language detection, translation, and formatting functions
@@ -215,7 +216,7 @@ export class LanguageUtils {
    * Get error message in specified language
    */
   getLocalizedErrorMessage(error: LLMError, language: SupportedLanguage): string {
-    return error.localizedMessage[language] || error.message;
+    return error.localizedMessage[language] || getErrorMessage(error);
   }
 
   /**

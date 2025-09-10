@@ -1,6 +1,6 @@
 import express from 'express';
 import { Context7Controller } from '../controllers/context7Controller';
-import { authenticateToken } from '../middleware/auth';
+import { verifyToken } from '../middleware/auth';
 import { body, param, query } from 'express-validator';
 import { validateRequest } from '../middleware/validation';
 
@@ -8,7 +8,7 @@ const router = express.Router();
 const context7Controller = new Context7Controller();
 
 // All Context7 routes require authentication
-router.use(authenticateToken);
+router.use(verifyToken);
 
 // Resolve library ID from query
 router.post('/resolve', 

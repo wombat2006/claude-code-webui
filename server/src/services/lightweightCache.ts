@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { logger } from '../config/logger';
+import logger from '../config/logger';
 
 interface CacheEntry {
   data: any;
@@ -37,7 +37,7 @@ export class LightweightCache {
         fs.mkdirSync(this.cacheDir, { recursive: true });
       }
     } catch (error) {
-      logger.error('Failed to create cache directory', error);
+      logger.error('Failed to create cache directory', error instanceof Error ? error : new Error(String(error)));
     }
   }
 
@@ -75,7 +75,7 @@ export class LightweightCache {
         }
       }
     } catch (error) {
-      logger.error('Cache cleanup failed', error);
+      logger.error('Cache cleanup failed', error instanceof Error ? error : new Error(String(error)));
     }
 
     if (cleaned > 0) {
@@ -130,7 +130,7 @@ export class LightweightCache {
         }
       }
     } catch (error) {
-      logger.error(`Cache read error for key ${key}:`, error);
+      logger.error(`Cache read error for key ${key}:`, error instanceof Error ? error : new Error(String(error)));
     }
 
     return null;
@@ -162,7 +162,7 @@ export class LightweightCache {
         }
       }
     } catch (error) {
-      logger.error(`Cache write error for key ${key}:`, error);
+      logger.error(`Cache write error for key ${key}:`, error instanceof Error ? error : new Error(String(error)));
     }
   }
 
@@ -175,7 +175,7 @@ export class LightweightCache {
         fs.unlinkSync(filePath);
       }
     } catch (error) {
-      logger.error(`Cache delete error for key ${key}:`, error);
+      logger.error(`Cache delete error for key ${key}:`, error instanceof Error ? error : new Error(String(error)));
     }
   }
 
@@ -191,7 +191,7 @@ export class LightweightCache {
       }
       logger.info('Cache cleared successfully');
     } catch (error) {
-      logger.error('Cache clear error:', error);
+      logger.error('Cache clear error:', error instanceof Error ? error : new Error(String(error)));
     }
   }
 
@@ -209,7 +209,7 @@ export class LightweightCache {
         }
       }
     } catch (error) {
-      logger.error('Error getting cache stats:', error);
+      logger.error('Error getting cache stats:', error instanceof Error ? error : new Error(String(error)));
     }
 
     return {

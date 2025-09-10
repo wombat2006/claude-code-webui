@@ -1,7 +1,8 @@
+import { toError } from '../utils/errorHandling';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import * as fs from 'fs';
-import { logger } from '../config/logger';
+import logger from '../config/logger';
 import { loadBalancer } from './loadBalancer';
 
 const execAsync = promisify(exec);
@@ -89,7 +90,7 @@ export class SystemMonitor {
         cores: this.metrics?.cpu.cores
       });
     } catch (error) {
-      logger.error('Failed to initialize SystemMonitor:', error);
+      logger.error('Failed to initialize SystemMonitor:', toError(error));
     }
   }
 
@@ -100,7 +101,7 @@ export class SystemMonitor {
         await this.collectMetrics();
         this.checkThresholds();
       } catch (error) {
-        logger.error('Monitoring cycle failed:', error);
+        logger.error('Monitoring cycle failed:', toError(error));
       }
     }, interval);
 
@@ -141,7 +142,7 @@ export class SystemMonitor {
       }
 
     } catch (error) {
-      logger.error('Failed to collect system metrics:', error);
+      logger.error('Failed to collect system metrics:', toError(error));
     }
   }
 
@@ -383,7 +384,7 @@ export class SystemMonitor {
       try {
         callback(metric, level, value);
       } catch (error) {
-        logger.error('Alert callback failed:', error);
+        logger.error('Alert callback failed:', toError(error));
       }
     });
   }

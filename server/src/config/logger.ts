@@ -1,6 +1,7 @@
 import winston from 'winston';
 import path from 'path';
 import fs from 'fs';
+import { getErrorMessage } from '../utils/errorHandling';
 import { LogContext, Environment } from '../types';
 
 // Create logs directory if it doesn't exist
@@ -107,7 +108,7 @@ const createAuditLogger = (): AuditLogger => {
         timestamp: new Date().toISOString(),
         error: error ? {
           name: error.name,
-          message: error.message,
+          message: getErrorMessage(error),
           stack: error.stack
         } : undefined,
         ...context

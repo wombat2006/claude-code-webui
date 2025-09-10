@@ -83,7 +83,7 @@ export class SessionManager extends EventEmitter {
       
       return sessionData;
     } catch (error) {
-      logger.error(`Failed to create session for user ${userId}:`, error);
+      logger.error(`Failed to create session for user ${userId}:`, error instanceof Error ? error : new Error(String(error)));
       throw error;
     }
   }
@@ -128,7 +128,7 @@ export class SessionManager extends EventEmitter {
 
       return sessionData;
     } catch (error) {
-      logger.error(`Failed to get session ${sessionId}:`, error);
+      logger.error(`Failed to get session ${sessionId}:`, error instanceof Error ? error : new Error(String(error)));
       throw error;
     }
   }
@@ -233,7 +233,7 @@ export class SessionManager extends EventEmitter {
             throw new Error('SESSION_UPDATE_CONFLICT');
           }
         } else {
-          logger.error(`Failed to update session ${sessionId}:`, error);
+          logger.error(`Failed to update session ${sessionId}:`, error instanceof Error ? error : new Error(String(error)));
           
           // Revert optimistic update on other errors too
           if (optimisticUpdate) {
@@ -259,7 +259,7 @@ export class SessionManager extends EventEmitter {
       this.emit('sessionDeleted', sessionId);
       logger.info(`Session deleted: ${sessionId}`);
     } catch (error) {
-      logger.error(`Failed to delete session ${sessionId}:`, error);
+      logger.error(`Failed to delete session ${sessionId}:`, error instanceof Error ? error : new Error(String(error)));
       throw error;
     }
   }
@@ -337,7 +337,7 @@ export class SessionManager extends EventEmitter {
         region: this.region
       };
     } catch (error) {
-      logger.error('SessionManager health check failed:', error);
+      logger.error('SessionManager health check failed:', error instanceof Error ? error : new Error(String(error)));
       return {
         healthy: false,
         cachedSessions: this.localCache.size,

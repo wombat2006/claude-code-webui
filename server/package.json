@@ -4,19 +4,22 @@
   "description": "Backend server for Claude Code WebUI",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc",
-    "start": "node --max-old-space-size=256 --max-semi-space-size=16 --expose-gc dist/index.js",
-    "dev": "node --max-old-space-size=256 --max-semi-space-size=16 --expose-gc -r ts-node/register --watch src/index.ts",
-    "watch": "tsc --watch"
+    "build": "NODE_OPTIONS='--max-old-space-size=2048 --max-semi-space-size=128' tsc",
+    "start": "NODE_OPTIONS='--max-old-space-size=512 --max-semi-space-size=32' node --expose-gc dist/index.js",
+    "dev": "NODE_OPTIONS='--max-old-space-size=1024 --max-semi-space-size=64' DISABLE_MCP_AUTOSTART=1 node -r ts-node/register --watch src/index.ts",
+    "watch": "NODE_OPTIONS='--max-old-space-size=1024 --max-semi-space-size=64' tsc --watch"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.61.0",
     "@aws-sdk/client-s3": "^3.883.0",
     "@aws-sdk/lib-storage": "^3.883.0",
     "@google/generative-ai": "^0.24.1",
+    "@types/cookie-parser": "^1.4.9",
     "@types/ioredis": "^4.28.10",
     "@types/node-fetch": "^2.6.13",
+    "@types/redis": "^4.0.10",
     "bcryptjs": "^2.4.3",
+    "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
@@ -27,6 +30,7 @@
     "jsonwebtoken": "^9.0.2",
     "node-fetch": "^3.3.2",
     "openai": "^5.19.1",
+    "redis": "^5.8.2",
     "socket.io": "^4.8.1",
     "winston": "^3.10.0"
   },

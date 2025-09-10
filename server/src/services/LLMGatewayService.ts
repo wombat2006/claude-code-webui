@@ -1,3 +1,4 @@
+import { getErrorMessage } from '../utils/errorHandling';
 /**
  * LLM Gateway Service - TypeScript Migration
  * Unified multilingual LLM interaction service with type safety
@@ -144,13 +145,13 @@ export class LLMGatewayService {
     } catch (error) {
       this.logger.error('LLM query failed', {
         model,
-        error: error instanceof Error ? error.message : String(error),
+        error: error instanceof Error ? getErrorMessage(error) : String(error),
         latency: Date.now() - startTime
       });
 
       throw this.isLLMError(error) ? error : this.createError(
         'LLM_QUERY_FAILED', 
-        `Query failed: ${error instanceof Error ? error.message : String(error)}`
+        `Query failed: ${error instanceof Error ? getErrorMessage(error) : String(error)}`
       );
     }
   }

@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import rateLimit from 'express-rate-limit';
 import { body, validationResult } from 'express-validator';
 import { Request, Response, NextFunction } from 'express';
+import { getErrorMessage } from '../utils/errorHandling';
 import { 
   User, 
   UserSession, 
@@ -43,22 +44,37 @@ const users = new Map<string, User>([
 // Active sessions tracking with proper typing
 const activeSessions = new Map<string, UserSession>();
 
-// Rate limiting for login attempts
+// Rate limiting for login attempts with environment-specific settings
+const isProduction = process.env.NODE_ENV === 'production';
+const isTest = process.env.NODE_ENV === 'test';
+
 export const loginLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5, // limit each IP to 5 requests per windowMs
+  windowMs: isTest ? 10 * 1000 : (isProduction ? 15 * 60 * 1000 : 60 * 1000), // Test: 10s, Prod: 15min, Dev: 1min
+  max: isTest ? 100 : (isProduction ? 5 : 20), // Test: 100, Prod: 5, Dev: 20
   message: {
     error: 'Too many login attempts, please try again later.',
   },
   standardHeaders: true,
   legacyHeaders: false,
+  // Don't count validation errors (400) towards rate limit
+  skip: (req: Request, res: Response) => {
+    return res.statusCode === 400;
+  },
   handler: (req: Request, res: Response): void => {
+    const resetTime = Math.ceil(((Date.now() + (isTest ? 10 * 1000 : (isProduction ? 15 * 60 * 1000 : 60 * 1000))) - Date.now()) / 1000);
+    
     logger.audit('Rate limit exceeded for login', {
       ip: req.ip,
-      userAgent: req.get('User-Agent')
+      userAgent: req.get('User-Agent'),
+      resetTime
     });
+    
     res.status(429).json({
-      error: 'Too many login attempts, please try again later.'
+      status: 'error',
+      message: 'Too many login attempts, please try again later.',
+      retryAfter: resetTime,
+      limit: isTest ? 100 : (isProduction ? 5 : 20),
+      window: isTest ? 10 : (isProduction ? 15 * 60 : 60)
     });
   }
 });
@@ -83,7 +99,7 @@ const generateToken = (user: User): string => {
     sessionId: `${user.username}-${Date.now()}`
   };
   
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+  return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN } as jwt.SignOptions);
 };
 
 // Verify JWT token middleware with proper typing
@@ -122,7 +138,7 @@ export const verifyToken = (
     req.user = decoded;
     next();
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const errorMessage = error instanceof Error ? getErrorMessage(error) : 'Unknown error';
     logger.audit('Access denied: Invalid token', {
       error: errorMessage,
       ip: req.ip,
@@ -169,7 +185,7 @@ export const verifySocketToken = (
     });
     next();
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const errorMessage = error instanceof Error ? getErrorMessage(error) : 'Unknown error';
     logger.audit('Socket connection denied: Invalid token', {
       error: errorMessage,
       socketId: socket.id,
@@ -245,9 +261,9 @@ export const login = async (req: Request, res: Response): Promise<void> => {
 
     res.json(response);
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const errorMessage = error instanceof Error ? getErrorMessage(error) : 'Unknown error';
     const errorStack = error instanceof Error ? error.stack : undefined;
-    logger.error('Login error', error as Error, { ip: req.ip });
+    logger.error('Login error', error instanceof Error ? error : new Error(String(error)), { ip: req.ip });
     res.status(500).json({ error: 'Internal server error' });
   }
 };
@@ -273,8 +289,8 @@ export const logout = (req: AuthenticatedRequest, res: Response): void => {
 
     res.json({ message: 'Logout successful' });
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    logger.error('Logout error', error as Error);
+    const errorMessage = error instanceof Error ? getErrorMessage(error) : 'Unknown error';
+    logger.error('Logout error', error instanceof Error ? error : new Error(String(error)));
     res.status(500).json({ error: 'Internal server error' });
   }
 };

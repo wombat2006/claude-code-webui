@@ -1,5 +1,5 @@
 import { s3RagService } from './s3RagService';
-import { logger } from '../config/logger';
+import logger from '../config/logger';
 
 interface Context7Request {
   type: 'library' | 'framework' | 'pattern' | 'best-practice' | 'api-reference';
@@ -78,7 +78,7 @@ export class Context7RagIntegration {
 
       return references;
     } catch (error) {
-      logger.error('Failed to collect Context7 references:', error);
+      logger.error('Failed to collect Context7 references:', error instanceof Error ? error : new Error(String(error)));
       throw error;
     }
   }
@@ -184,7 +184,7 @@ export class Context7RagIntegration {
 
       logger.debug(`Stored ${response.references.length + 1} Context7 documents in RAG`);
     } catch (error) {
-      logger.error('Failed to store Context7 references in RAG:', error);
+      logger.error('Failed to store Context7 references in RAG:', error instanceof Error ? error : new Error(String(error)));
       // Don't throw - reference collection should succeed even if storage fails
     }
   }
@@ -220,7 +220,7 @@ export class Context7RagIntegration {
         lastUpdated: result.document.metadata.updatedAt
       }));
     } catch (error) {
-      logger.error('Failed to search design references:', error);
+      logger.error('Failed to search design references:', error instanceof Error ? error : new Error(String(error)));
       throw error;
     }
   }
@@ -276,7 +276,7 @@ export class Context7RagIntegration {
       logger.info(`Cleaned up ${deletedCount} old Context7 cache entries`);
       return deletedCount;
     } catch (error) {
-      logger.error('Failed to cleanup Context7 cache:', error);
+      logger.error('Failed to cleanup Context7 cache:', error instanceof Error ? error : new Error(String(error)));
       return 0;
     }
   }
@@ -399,7 +399,7 @@ export class Context7RagIntegration {
 
       return stats;
     } catch (error) {
-      logger.error('Failed to get Context7 integration statistics:', error);
+      logger.error('Failed to get Context7 integration statistics:', error instanceof Error ? error : new Error(String(error)));
       throw error;
     }
   }

@@ -1,6 +1,14 @@
 import { Request } from 'express';
 import { Socket } from 'socket.io';
 
+export interface SimpleAuthRequest extends Request {
+  user?: {
+    username: string;
+    role: string;
+  };
+  isAuthenticated?: boolean;
+}
+
 // User types
 export interface User {
   username: string;
@@ -32,6 +40,12 @@ export interface AuthenticatedRequest extends Request {
 
 export interface AuthenticatedSocket extends Socket {
   user?: JWTPayload;
+  id: string;
+  handshake: any;
+  data: any;
+  emit: (event: string, ...args: any[]) => boolean;
+  on: (event: string, listener: (...args: any[]) => void) => this;
+  disconnect: (close?: boolean) => this;
 }
 
 // API Response types
@@ -100,10 +114,26 @@ export interface ServerToClientEvents {
   commandComplete: (data: { exitCode: number; timestamp: Date }) => void;
   sessionExpired: () => void;
   error: (data: { message: string; code?: string }) => void;
+  connected: (data: { message: string; sessionId: string; username: string }) => void;
+  heartbeatAck: (data: { timestamp: Date }) => void;
+  sessionJoined: (data: { sessionId: string }) => void;
+  sessionChanged: (data: { sessionId: string; changes: any; timestamp: number }) => void;
+  sessionSynced: (data: { sessionId: string; sourceRegion: string; timestamp: number }) => void;
+  sessionReverted: (data: { sessionData: any; timestamp: number }) => void;
+  sessionConfirmed: (data: { sessionData: any; timestamp: number }) => void;
+  sessionConflict: (data: { 
+    sessionId: string; 
+    conflictType: string; 
+    expectedVersion: number; 
+    currentVersion: number; 
+    timestamp: number;
+    action: string;
+  }) => void;
 }
 
 export interface ClientToServerEvents {
-  executeCommand: (data: CommandRequest) => void;
+  executeCommand: (data: { command: string; args?: string[] }) => void;
+  sendInput: (data: { input: string }) => void;
   joinSession: (data: { sessionId: string }) => void;
   heartbeat: () => void;
 }
@@ -115,6 +145,8 @@ export interface InterServerEvents {
 export interface SocketData {
   user: JWTPayload;
   sessionId: string;
+  claudeSessionId?: string;
+  distributedSessionId?: string;
 }
 
 // Error types
@@ -150,6 +182,6 @@ export interface LogContext {
   path?: string;
   method?: string;
   timestamp?: string;
-  type?: 'audit' | 'error' | 'info' | 'warn';
+  type?: 'audit' | 'error' | 'info' | 'warn' | 'library' | 'framework' | 'pattern' | 'best-practice' | 'api-reference' | 'conversation' | 'code-context' | 'problem-solution' | 'preference' | 'knowledge';
   [key: string]: any;
 }

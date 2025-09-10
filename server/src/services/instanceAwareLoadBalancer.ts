@@ -1,6 +1,6 @@
 import { EventEmitter } from 'events';
 import { vmstatSarMonitor } from './vmstatMonitor';
-import { logger } from '../config/logger';
+import logger from '../config/logger';
 
 interface NodeCapabilities {
   id: string;
@@ -310,7 +310,7 @@ export class InstanceAwareLoadBalancer extends EventEmitter {
       }
 
     } catch (error) {
-      logger.error('Failed to update Tokyo co-node metrics:', error);
+      logger.error('Failed to update Tokyo co-node metrics:', error instanceof Error ? error : new Error(String(error)));
       tokyoNode.healthy = false;
     }
   }
@@ -341,7 +341,7 @@ export class InstanceAwareLoadBalancer extends EventEmitter {
         decision.reasoning.unshift(`Rule: ${ruleName}`);
         ruleResults.push(decision);
       } catch (error) {
-        logger.error(`Routing rule ${ruleName} failed:`, error);
+        logger.error(`Routing rule ${ruleName} failed:`, error instanceof Error ? error : new Error(String(error)));
       }
     }
 

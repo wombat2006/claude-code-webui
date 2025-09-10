@@ -1,6 +1,7 @@
+import { toError } from '../utils/errorHandling';
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { logger } from '../config/logger';
+import logger from '../config/logger';
 
 const execAsync = promisify(exec);
 
@@ -94,7 +95,7 @@ export class VmstatSarMonitor {
       
       logger.info('VmstatSarMonitor started successfully');
     } catch (error) {
-      logger.error('Failed to start monitoring:', error);
+      logger.error('Failed to start monitoring:', toError(error));
       this.monitoringActive = false;
     }
   }
@@ -103,7 +104,7 @@ export class VmstatSarMonitor {
     // Run vmstat every 5 seconds continuously
     this.vmstatProcess = exec('vmstat 5', (error, stdout, stderr) => {
       if (error && this.monitoringActive) {
-        logger.error('vmstat process error:', error);
+        logger.error('vmstat process error:', toError(error));
         // Restart after 10 seconds
         setTimeout(() => this.startVmstatMonitoring(), 10000);
       }
@@ -171,7 +172,10 @@ export class VmstatSarMonitor {
       this.checkVmstatThresholds(data);
 
     } catch (error) {
-      logger.debug('Failed to parse vmstat line:', line, error);
+      logger.debug('Failed to parse vmstat line', { 
+        line, 
+        error: error instanceof Error ? error.message : String(error) 
+      });
     }
   }
 
@@ -194,7 +198,7 @@ export class VmstatSarMonitor {
       this.checkSarThresholds(this.sarData);
 
     } catch (error) {
-      logger.error('Failed to update sar data:', error);
+      logger.error('Failed to update sar data:', toError(error));
     }
   }
 
@@ -386,7 +390,7 @@ export class VmstatSarMonitor {
       try {
         callback(metric, level, value);
       } catch (error) {
-        logger.error('Alert callback failed:', error);
+        logger.error('Alert callback failed:', toError(error));
       }
     });
   }

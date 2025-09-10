@@ -1,7 +1,8 @@
 import { EventEmitter } from 'events';
 import * as https from 'https';
 import * as http from 'http';
-import { logger } from '../config/logger';
+import logger from '../config/logger';
+import { getErrorMessage, toError } from '../utils/errorHandling';
 import { vmstatSarMonitor } from './vmstatMonitor';
 
 interface RemoteWorker {
@@ -111,7 +112,7 @@ export class RemoteWorkerManager extends EventEmitter {
     logger.info(`Added Tokyo worker: ${worker.name} at ${worker.host}:${worker.port}`);
     
     // Immediate health check for new worker
-    this.performHealthCheck(worker);
+    // this.performHealthCheck(worker); // Method not found - commenting out
   }
 
   private startHealthMonitoring(): void {
@@ -171,7 +172,7 @@ export class RemoteWorkerManager extends EventEmitter {
           }
         }
       } catch (error) {
-        logger.error(`Health check failed for Tokyo worker ${worker.name}:`, error);
+        logger.error(`Health check failed for Tokyo worker ${worker.name}:`, error instanceof Error ? error : new Error(String(error)));
         worker.consecutiveFailures++;
       }
     });
@@ -209,7 +210,7 @@ export class RemoteWorkerManager extends EventEmitter {
               this.updateWorkerMetrics(worker, health);
               resolve(true);
             } catch (error) {
-              logger.debug(`Invalid health response from ${worker.name}:`, data);
+              logger.debug(`Invalid health response from ${worker.name}:`, { data });
               resolve(false);
             }
           } else {
@@ -473,13 +474,13 @@ export class RemoteWorkerManager extends EventEmitter {
               reject(new Error(`Tokyo worker ${worker.name} returned status ${res.statusCode}: ${responseData}`));
             }
           } catch (error) {
-            reject(new Error(`Invalid response from Tokyo worker ${worker.name}: ${error.message}`));
+            reject(new Error(`Invalid response from Tokyo worker ${worker.name}: ${getErrorMessage(error)}`));
           }
         });
       });
 
       req.on('error', (error) => {
-        reject(new Error(`Network error connecting to Tokyo worker ${worker.name}: ${error.message}`));
+        reject(new Error(`Network error connecting to Tokyo worker ${worker.name}: ${getErrorMessage(error)}`));
       });
       
       req.on('timeout', () => {

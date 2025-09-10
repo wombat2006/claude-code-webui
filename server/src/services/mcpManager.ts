@@ -1,5 +1,7 @@
 import { spawn, ChildProcess } from 'child_process';
-import { logger } from '../config/logger';
+import fs from 'fs';
+import path from 'path';
+import logger from '../config/logger';
 
 interface MCPServer {
   name: string;
@@ -8,6 +10,126 @@ interface MCPServer {
   process?: ChildProcess;
   lastUsed: number;
   startTime?: number;
+}
+
+const LOCK_FILE = process.env.MCP_LOCK_FILE || '/tmp/zen-mcp-manager.lock';
+let locked = false;
+let children: Array<{name: string, pid: number, proc: ChildProcess}> = [];
+
+export async function ensureSingleInstance(): Promise<boolean> {
+  if (locked) return true;
+  
+  try {
+    const fd = fs.openSync(LOCK_FILE, 'wx'); // fail if exists
+    fs.writeSync(fd, String(process.pid));
+    fs.closeSync(fd);
+    locked = true;
+    
+    // Clean up lock file on exit
+    process.on('exit', () => {
+      try {
+        fs.unlinkSync(LOCK_FILE);
+      } catch {}
+    });
+    
+    logger.info('MCP Manager: Single instance lock acquired');
+    return true;
+  } catch (error) {
+    logger.warn(`MCP Manager: Already running (lock: ${LOCK_FILE}). Skipping autostart.`);
+    return false;
+  }
+}
+
+function registerChild(name: string, proc: ChildProcess): void {
+  if (!proc.pid) return;
+  
+  children.push({ name, pid: proc.pid, proc });
+  logger.info(`MCP Manager: Registered child ${name} (PID: ${proc.pid})`);
+  
+  proc.on('exit', (code, signal) => {
+    children = children.filter(c => c.pid !== proc.pid);
+    logger.info(`MCP Manager: ${name} exited`, { code, signal, pid: proc.pid });
+  });
+}
+
+export async function stopAllMcp(): Promise<void> {
+  logger.info(`MCP Manager: Stopping ${children.length} child processes`);
+  
+  // Send SIGTERM to all children
+  for (const c of [...children]) {
+    try {
+      process.kill(c.pid, 'SIGTERM');
+      logger.info(`MCP Manager: Sent SIGTERM to ${c.name} (PID: ${c.pid})`);
+    } catch (error) {
+      logger.warn(`MCP Manager: Failed to send SIGTERM to ${c.name} (PID: ${c.pid})`, error);
+    }
+  }
+  
+  // Wait up to 3 seconds for graceful shutdown
+  const deadline = Date.now() + 3000;
+  while (children.length && Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, 50));
+  }
+  
+  // Force kill any remaining processes
+  for (const c of [...children]) {
+    try {
+      process.kill(c.pid, 'SIGKILL');
+      logger.warn(`MCP Manager: Force killed ${c.name} (PID: ${c.pid})`);
+    } catch (error) {
+      logger.warn(`MCP Manager: Failed to force kill ${c.name} (PID: ${c.pid})`, error);
+    }
+  }
+  
+  children = [];
+  logger.info('MCP Manager: All child processes stopped');
+}
+
+export async function initMcpAutostart(): Promise<void> {
+  if (!locked) {
+    logger.warn('MCP Manager: Single instance lock not acquired, skipping autostart');
+    return;
+  }
+  
+  logger.info('MCP Manager: Starting MCP autostart initialization');
+  
+  const env = { ...process.env };
+  
+  try {
+    // Check if zen-mcp-server command exists
+    const zenProc = spawn('which', ['zen-mcp-server'], { stdio: 'pipe' });
+    const zenExists = await new Promise((resolve) => {
+      zenProc.on('exit', (code) => resolve(code === 0));
+    });
+    
+    if (zenExists) {
+      const zen = spawn('zen-mcp-server', [], { stdio: 'inherit', env });
+      registerChild('zen-mcp-server', zen);
+    } else {
+      logger.warn('MCP Manager: zen-mcp-server command not found, skipping');
+    }
+  } catch (error) {
+    logger.error('MCP Manager: Failed to start zen-mcp-server', error instanceof Error ? error : new Error(String(error)));
+  }
+  
+  try {
+    // Check if o3-search-mcp command exists
+    const o3Proc = spawn('which', ['o3-search-mcp'], { stdio: 'pipe' });
+    const o3Exists = await new Promise((resolve) => {
+      o3Proc.on('exit', (code) => resolve(code === 0));
+    });
+    
+    if (o3Exists) {
+      const o3 = spawn('o3-search-mcp', [], { stdio: 'inherit', env });
+      registerChild('o3-search-mcp', o3);
+    } else {
+      logger.warn('MCP Manager: o3-search-mcp command not found, skipping');
+    }
+  } catch (error) {
+    logger.error('MCP Manager: Failed to start o3-search-mcp', error instanceof Error ? error : new Error(String(error)));
+  }
+  
+  logger.info(`MCP Manager: Autostart completed, ${children.length} processes running`);
 }
 
 export class MCPManager {
@@ -44,7 +166,7 @@ export class MCPManager {
       };
 
       process.on('error', (error) => {
-        logger.error(`MCP server ${name} error:`, error);
+        logger.error(`MCP server ${name} error:`, error instanceof Error ? error : new Error(String(error)));
         this.servers.delete(name);
       });
 
@@ -58,7 +180,7 @@ export class MCPManager {
       
       return true;
     } catch (error) {
-      logger.error(`Failed to start MCP server ${name}:`, error);
+      logger.error(`Failed to start MCP server ${name}:`, error instanceof Error ? error : new Error(String(error)));
       return false;
     }
   }
@@ -105,7 +227,7 @@ export class MCPManager {
           const response = JSON.parse(stdout);
           resolve(response.result || response);
         } catch (error) {
-          logger.error(`MCP server ${name} response parse error:`, error);
+          logger.error(`MCP server ${name} response parse error:`, error instanceof Error ? error : new Error(String(error)));
           reject(new Error(`Invalid response from ${name}: ${stderr || stdout}`));
         }
       };

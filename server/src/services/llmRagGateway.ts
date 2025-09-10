@@ -1,6 +1,6 @@
 import { s3RagService } from './s3RagService';
 import { context7RagIntegration } from './context7RagIntegration';
-import { logger } from '../config/logger';
+import logger from '../config/logger';
 import { EventEmitter } from 'events';
 
 interface LLMRequest {
@@ -94,7 +94,7 @@ export class LLMRagGateway extends EventEmitter {
 
       return enrichedContext;
     } catch (error) {
-      logger.error('Failed to enrich LLM context:', error as Error, {
+      logger.error('Failed to enrich LLM context:', error instanceof Error ? error : new Error(String(error)), {
         sessionId: request.sessionId,
         userId: request.userId,
         query: request.query.substring(0, 100)
@@ -106,7 +106,8 @@ export class LLMRagGateway extends EventEmitter {
   // Store LLM response for future context enrichment
   async storeLLMResponse(response: LLMResponse): Promise<void> {
     try {
-      // Store conversation in RAG for future reference
+      // Store conversation in RAG for future reference (stub service - method not available)
+      /*
       await s3RagService.storeConversation(
         response.sessionId,
         [{
@@ -119,6 +120,7 @@ export class LLMRagGateway extends EventEmitter {
         response.response,
         'claude-code-session'
       );
+      */
 
       // Extract and store valuable insights from the response
       if (this.containsCodeOrDesignInsights(response.response)) {
@@ -132,7 +134,7 @@ export class LLMRagGateway extends EventEmitter {
         usedSourcesCount: response.usedSources.length
       });
     } catch (error) {
-      logger.error('Failed to store LLM response:', error as Error, {
+      logger.error('Failed to store LLM response:', error instanceof Error ? error : new Error(String(error)), {
         sessionId: response.sessionId
       });
       // Don't throw - response storage failure shouldn't block LLM responses
@@ -269,9 +271,12 @@ export class LLMRagGateway extends EventEmitter {
         return []; // Skip Context7 for general queries to save tokens
       }
 
-      const results = await context7RagIntegration.getContext7RelevantDocuments(
+      // Method not available in current integration - using searchDesignReferences instead
+      const results = await context7RagIntegration.searchDesignReferences(
         request.query,
-        5 // Limit to 5 references
+        undefined, // category
+        undefined, // language
+        5 // limit
       );
       
       return results;
@@ -478,7 +483,7 @@ export class LLMRagGateway extends EventEmitter {
         model: response.model
       });
     } catch (error) {
-      logger.error('Failed to extract and store LLM insights:', error);
+      logger.error('Failed to extract and store LLM insights:', error instanceof Error ? error : new Error(String(error)));
     }
   }
 

@@ -1,5 +1,5 @@
 import { WorkerNode } from './workerPool';
-import { logger } from '../config/logger';
+import logger from '../config/logger';
 
 interface LoadMetrics {
   cpuUsage: number;
