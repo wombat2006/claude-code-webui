@@ -143,4 +143,4 @@ test-data/
 .env.*
 *_pat_*
 *api_key*
-*_token*
+*_token*aws-docs-pdfs/
